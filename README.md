@@ -1,4 +1,4 @@
-## TwitchDatabaseBot
+## TwitchAnalyticsBot
 
 TwitchDatabaseBot is an under-development Javascript program that has been used to log chat messages in real-time from one or more twitch.tv livestream.
 
