@@ -12,11 +12,14 @@ export class DatabaseUtil {
   
   constructor(dbName) {
     this.dbName = dbName;
-    this.dbPath = path.join(__dirname, "data", `${dbName}.sqlite`);
+    this.dbPath = path.join(__dirname, "data", `${dbName}Chat.sqlite`);
   }
 
   async initDatabase() {
     await fs.ensureDir(path.dirname(this.dbPath));
+    if (!fs.existsSync(this.dbPath)) {
+      await fs.writeFile(this.dbPath, ''); // Create an empty file
+    }
     await fs.chmodSync(this.dbPath, 0o666);
     this.db = await open({
       filename: this.dbPath,
@@ -58,4 +61,21 @@ export class DatabaseUtil {
       console.log('Database connection closed.');
     }
   }
+
+  // This function is used to check the size of the database file. If it gets too big, it will exit the program.
+  // --TODO:-- Instead of exiting the program, create a new database file(?). 
+  async processDBFile() {
+    fs.stat(this.dbPath, (err, stats) => {
+      if (err) {
+        console.error(err);
+        return;
+      }
+      if (stats.size > 100000000) {
+        // 100MB
+        console.error("File is too big, exiting");
+        clearInterval(intervalId);
+        process.exit();
+      }
+    });
+  };
 }
