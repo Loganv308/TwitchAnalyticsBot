@@ -1,4 +1,4 @@
-let increment = (function() {
+const incrementUp = (function() {
     let n = 0;
   
     return function() {
@@ -7,4 +7,4 @@ let increment = (function() {
     }
   })();
 
-export default increment; 
+export default incrementUp; 

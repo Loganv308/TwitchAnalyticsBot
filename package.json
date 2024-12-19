@@ -15,8 +15,7 @@
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.2",
     "tmi.js": "^1.8.5",
-    "winston": "^3.8.2",
-    "winston-better-sqlite3": "^1.0.4"
+    "winston": "^3.8.2"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

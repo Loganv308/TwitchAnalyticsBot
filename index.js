@@ -1,19 +1,13 @@
 import { Client } from "tmi.js"; // This line is importing the tmi module. Short for "Twitch Messaging interface"
-import {
-  format as _format,
-  transports as _transports,
-} from "winston"; // Winston module (Logger)
-import { stat } from "fs"; // File system module
 import axios from "axios"; // Axios module (HTTP requests)
 import increment from "./counter.js"; // Counter module
+import { DatabaseUtil } from "./database.js"; // Database module
+import utils, { formatDate } from "./utils.js";
 
 // This lines is required for the script. It is used to load the .env file.
 import dotenv from "dotenv";
 dotenv.config();
 
-import { DatabaseUtil } from "./database.js"; // Database module
-
-const db = new DatabaseUtil("ChatDatabase"); // Database connection
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 
@@ -52,7 +46,8 @@ async function getTopChannels() {
     })
     .then((response) => {
       try {
-        for (let x in response.data.data[0].user_name) {
+        for (let x = 0; x < response.data.data[0].user_name; x++) {
+          //console.log(response.data.data[x].viewer_count);
           const viewerCount = response.data.data[x].viewer_count;
           const userName = response.data.data[x].user_name;
           console.log(
@@ -75,52 +70,56 @@ async function getTopChannels() {
     });
 }
 
-const processFile = () => {
-  // This function is used to check the size of the database file. If it gets too big, it will exit the program.
-  stat("TwitchBotDatabase.sqlite", (err, stats) => {
-    if (err) {
-      console.error(err);
-      return;
-    }
-
-    if (stats.size > 100000000) {
-      // 100MB
-      console.error("File is too big, exiting");
-      clearInterval(intervalId);
-      process.exit();
-    }
-  });
-};
-
-setInterval(processFile, 10000);
-
 (async () => {
   try {
-    
-    // Initialize the database
-    console.log("Initializing database...");
-    await db.initDatabase();
-    console.log("Database initialized successfully.");
+
+    // Create a map to store the database for each channel
+    const channelDbMap = new Map();
+
+    console.log(channelDbMap);
 
     // Create Twitch client
-    const client = new Client({
+    const c = new Client({
       connection: {
         secure: true,
         reconnect: true,
       },
-      channels: ["xqc"], // Add your desired channels here
+      channels: ["xqc", "loltyler1","paymoneywubby", "zackrawrr"] // Add your desired channels here
     });
 
+    // Connect to Twitch
+    await c.connect();
+    console.log("Connected to Twitch chat.");
+
+    const channels = c.getOptions().channels;
+    const cleanChannels = channels.map(channel => channel.replace(/^#/, ''));
+
+    // Initialize the database
+    console.log("Initializing databases...");
+
+    for (const [index, channel] of cleanChannels.entries()) {
+      console.log(`Channel ${index}: ${channel}`);
+      const db = new DatabaseUtil(`${channel}`);
+      await db.initDatabase();
+      channelDbMap.set(channel, db); // Store the database instance in the map
+      console.log(`Database initialized for channel: ${channel}`);
+    };
+
+    console.log("Databases initialized successfully.");
+
     // Handle messages from Twitch chat
-    client.on("message", async (channel, tags, message) => {
+    c.on("message", async (channel, tags, message) => {
       try {
+        const cleanChannel = channel.replace(/^#/, ''); // Remove '#' prefix
+        const db = channelDbMap.get(cleanChannel); // Get the database instance for the channel
+
+        if (!db) {
+          console.error(`No database found for channel: ${cleanChannel}`);
+          return;
+        }
+
         const chatMessage = message.replace(/'/g, "''");
-        const formattedDate = new Date().toLocaleString("en-us", {
-          weekday: "long",
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        });
+        const formattedDate = utils.formatDate(new Date());
         const userID = tags["user-id"]; // User ID
         const twitchName = tags["display-name"]; // Display name
         const subscriber = tags["subscriber"]; // Subscriber status
@@ -152,14 +151,14 @@ setInterval(processFile, 10000);
       }
     });
 
-    // Connect to Twitch
-    await client.connect();
-    console.log("Connected to Twitch chat.");
+    // https://stackoverflow.com/questions/41292609/typeerror-callback-argument-must-be-a-function
+    // (() => <function>, interval), this is necessary because setInterval expects a function as 
+    // its first argument. Therefore, adding in () => db.processFile wraps it in a function, then triggers it. 
+    
+    // TODO: FIX THIS BELOW STATEMENT
+    //setInterval(() => db.processDBFile(), 10000);
 
   } catch (err) {
     console.error("Error during initialization:", err);
   }
 })();
-
-getTopChannels();
-processFile();
