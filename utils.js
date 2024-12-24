@@ -1,3 +1,5 @@
+// Global variables
+let n = 0;
 
 // Date/Time functions
 // ------------------------------------------------
@@ -12,7 +14,20 @@ export function formatDate(date, locale = 'en-US') {
 
 // Counter functions
 // ------------------------------------------------
+export function incrementUp() { 
+    n += 1; // Increment the counter
+    return n; 
+}
 
+export function incrementDown() {
+    n -= 1; // Increment the counter
+    return n; 
+}
+
+
+// Export function
+// ------------------------------------------------
 export default {
-    formatDate
+    formatDate,
+    incrementUp
 };
