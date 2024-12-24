@@ -1,8 +1,9 @@
 import sqlite3 from "sqlite3";
-import { open } from "sqlite";
 import path from "path";
-import { fileURLToPath } from "url";
 import fs from "fs-extra";
+
+import { open } from "sqlite";
+import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,7 +21,7 @@ export class DatabaseUtil {
     if (!fs.existsSync(this.dbPath)) {
       await fs.writeFile(this.dbPath, ''); // Create an empty file
     }
-    await fs.chmodSync(this.dbPath, 0o666);
+    fs.chmodSync(this.dbPath, 0o666);
     this.db = await open({
       filename: this.dbPath,
       driver: sqlite3.Database,
