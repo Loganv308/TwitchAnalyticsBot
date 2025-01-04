@@ -1,5 +1,6 @@
 import { Client } from "tmi.js"; // This line is importing the tmi module. Short for "Twitch Messaging interface"
 import { DatabaseUtil } from "./database.js"; // Database module
+import { getStreamData, getTopChannels, offlineOnlineStreams } from "./analytics.js";
 import utils, { formatDate, incrementUp } from "./utils.js";
 
 (async () => {
@@ -23,18 +24,28 @@ import utils, { formatDate, incrementUp } from "./utils.js";
     const channels = c.getOptions().channels;
     const cleanChannels = channels.map(channel => channel.replace(/^#/, ''));
 
-    // Initialize the database
-    console.log("Initializing databases...");
+    try {
+      console.log('Fetching stream data for channels:', cleanChannels);
+      const { live, offline } = await offlineOnlineStreams(cleanChannels);
+      
+      console.log(`Live Channels (${live.length}):`, live);
+      console.log(`Offline Channels (${offline.length}):`, offline);
+    } catch (error) {
+      console.error('Failed to fetch stream data:', error);
+    }
 
+    // Initialize the database
+    console.log("Initializing databases...", '\n');
+    
     for (const [index, channel] of cleanChannels.entries()) {
       console.log(`Channel ${index}: ${channel}`);
       const db = new DatabaseUtil(`${channel}`);
       await db.initDatabase();
       channelDbMap.set(channel, db); // Store the database instance in the map
-      console.log(`Database initialized for channel: ${channel}`);
+      console.log(`Database initialized for channel: ${channel}`, '\n');
     };
 
-    console.log("Databases initialized successfully.");
+    console.log("Databases initialized successfully.", '\n');
 
     // Handle messages from Twitch chat
     c.on("message", async (channel, tags, message) => {
@@ -47,23 +58,22 @@ import utils, { formatDate, incrementUp } from "./utils.js";
           return;
         }
 
-        const chatMessage = message.replace(/'/g, "''");
-        const formattedDate = utils.formatDate(new Date());
-        const userID = tags["user-id"]; // User ID
-        const twitchName = tags["display-name"]; // Display name
-        const subscriber = tags["subscriber"]; // Subscriber status
-        const randID = Math.floor(Math.random() * 10_000_000_000); // Random ID
+        const chatMessage = message.replace(/'/g, "''"); // Message
+        const formattedDate = utils.formatDate(new Date()); // Formatted date for Database
+        const userID = tags["user-id"]; // Twitch User ID
+        const twitchName = tags["display-name"]; // Twitch Display name
+        const subscriber = tags["subscriber"]; // Subscriber status (T/F)
         const named_channel = channel.replace("#", "").toUpperCase(); // Channel name
-
-        // Insert into database
-        await db.insertIntoDatabase(
-          randID,
-          formattedDate,
-          userID,
-          twitchName,
-          chatMessage,
-          named_channel
-        );
+        
+        // // Insert into database
+        // await db.insertIntoDatabase(
+        //   randID,
+        //   formattedDate,
+        //   userID,
+        //   twitchName,
+        //   chatMessage,
+        //   named_channel
+        // );
 
         // Log the message
         if (subscriber == "1") {
