@@ -2,6 +2,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import axios from "axios";
+
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 
@@ -20,7 +22,7 @@ export async function getOAuthToken() {
       "Content-Type": "application/x-www-form-urlencoded",
     },
   });
-  console.log("Auth Token:", response.data.access_token);
+  
   return response.data.access_token;
 }
 
