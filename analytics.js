@@ -111,6 +111,10 @@ export async function offlineOnlineStreams(channels)
   }
 }
 
+export async function parseStreamData(channels) {
+  
+}
+
 export default {
     getTopChannels,
     getStreamData,

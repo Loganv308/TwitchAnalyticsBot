@@ -37,12 +37,13 @@ import utils, { formatDate, incrementUp } from "./utils.js";
     // Initialize the database
     console.log("Initializing databases...", '\n');
     
+    // For each channel, this will initiate a new SQLite DB in the "data" directory. 
     for (const [index, channel] of cleanChannels.entries()) {
       console.log(`Channel ${index}: ${channel}`);
       const db = new DatabaseUtil(`${channel}`);
       await db.initDatabase();
       channelDbMap.set(channel, db); // Store the database instance in the map
-      console.log(`Database initialized for channel: ${channel}`, '\n');
+      console.log(`Database initialized for channel: ${channel}`);
     };
 
     console.log("Databases initialized successfully.", '\n');
