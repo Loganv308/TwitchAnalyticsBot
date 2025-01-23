@@ -38,11 +38,13 @@ export class DatabaseUtil {
       // Sets the proper permission, otherwise file becomes non-writable
       fs.chmodSync(this.dbPath, 0o666);
 
+      console.log(`Database initialized for channel: ${dbName}`);
+
       // Creates the tables in the databases
       await this.createTables();
     }
     else {
-      console.log(`Database for ${this.dbName} exists, opening...` + '\n')
+      console.log(`Database for ${this.dbName} exists, opening...`)
 
       // Opens the SQLite database. This will only trigger if the DB's exist for each channel already. 
       this.db = await open({
@@ -59,11 +61,12 @@ export class DatabaseUtil {
     const query = `
       CREATE TABLE IF NOT EXISTS Streams (
         stream_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        start_time TEXT NOT NULL,
-        end_time TEXT,
         title TEXT,
-        game TEXT
-        is_Live BOOLEAN
+        game TEXT,
+        started_at TEXT,
+        view_count INTEGER,
+        user_id INTEGER,
+        thumbnail_Url TEXT
       );
 
       CREATE TABLE IF NOT EXISTS Chat_messages (
@@ -80,59 +83,33 @@ export class DatabaseUtil {
   }
 
   // This method inserts the data into each database.  
-  async insertIntoDatabase({
-    tableName, 
-    streamID,
-    formattedDate,
-    userID,
-    twitchName,
-    chatMessage,
-    startTime,
-    endTime,
-    title,
-    game
-  }) {
-    // If this can't find or connect to a DB, it will throw an error. 
-    if (!this.db) {
-      console.error('Database connection not initialized.');
-      return;
-    }
-    
-    // The DB Query, along with params that will be put into each database. 
-    let query;
-    let params;
-
-    // Data to insert into "Streams" table for each database.
-    if(tableName === 'Streams') {
-      query = `
-        INSERT INTO Streams (start_time, end_time, title, game)
-        VALUES (?, ?, ?, ?)
-      `;
-      params = [startTime, endTime, title, game];
-    
-    // Data to insert into "Chat_messages" table for each database.
-    } else if (tableName === 'Chat_messages') {
-      query = `
-        INSERT INTO Chat_messages (stream_id, user_id, username, message, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-      `;
-      params = [streamID, userID, twitchName, chatMessage, formattedDate];
-    
-    // If no table is found, an error will be thrown. 
-    } else {
-      console.error(`Unknown table: ${tableName}`);
-      return;
-    }
-
-    // Each time the data program detects a new Chat Message, it will run the query with the params 
-    // into each database. 
+  async insertStreamData(streamData) {
     try {
-      await this.db.run(query, params);
-      console.log(`Data inserted into ${tableName} successfully.`);
+      // If this can't find or connect to a DB, it will throw an error. 
+      if (!this.db) {
+        console.error('Database connection not initialized.');
+        return;
+      }
 
-    // Otherwise, it will error saying it wasn't able to put it into the database. 
-    } catch (error) {
-      console.log(`Error inserting data into ${tableName}: `, err);
+      const query = `
+        INSERT INTO Streams (stream_id, title, game, started_at, view_count, user_id, thumbnail_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      `;
+
+      for (const stream of streamData) {
+        await this.db.run(query, [
+          stream.id,
+          stream.title,        // Maps to the 'title' column
+          stream.game,         // Maps to the 'game' column
+          stream.started_at,    // Maps to the 'started_at' column
+          stream.viewer_count,  // Maps to the 'view_count' column
+          stream.user_id,       // Maps to the 'user_id' column
+          stream.thumbnail_Url, // Maps to the 'thumbnail_url' column
+        ]);
+      }
+
+    } catch(error) {
+      console.error('Error inserting data into the database:', error);
     }
   }
 

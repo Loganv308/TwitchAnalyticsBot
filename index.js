@@ -14,7 +14,7 @@ import utils, { formatDate, incrementUp } from "./utils.js";
         secure: true,
         reconnect: true,
       },
-      channels: ["xqc", "loltyler1","paymoneywubby", "zackrawrr"] // Add your desired channels here
+      channels: ["xqc","paymoneywubby", "zackrawrr"] // Add your desired channels here
     });
 
     // Connect to Twitch
@@ -26,27 +26,60 @@ import utils, { formatDate, incrementUp } from "./utils.js";
 
     try {
       console.log('Fetching stream data for channels:', cleanChannels);
-      const { live, offline } = await offlineOnlineStreams(cleanChannels);
+
+      const rawStreamData = await getStreamData(cleanChannels);
+
+      if (rawStreamData.length === 0) {
+        console.log('No live streams found.');
+        return;
+      }
       
-      console.log(`Live Channels (${live.length}):`, live);
-      console.log(`Offline Channels (${offline.length}):`, offline);
+      const transformedData = rawStreamData.map((stream) => ({
+        streamID: stream.id,
+        title: stream.title,
+        game_name: stream.game_name, // Adjust as needed for your schema
+        startedAt: stream.started_at,
+        viewerCount: stream.viewer_count,
+        userId: stream.user_id,
+        thumbnailUrl: stream.thumbnail_url,
+      }));
+  
+      console.log('Transformed Data:', transformedData);
+
+      // const streamDb = new DatabaseUtil 
+      
+      // const { live, offline } = await offlineOnlineStreams(cleanChannels);
+
+      // if (live.length > 0) {
+      //   live.forEach((stream) => {
+      //     console.log(`LIVE: Channel: ${stream.user_name}, Viewers: ${stream.viewer_count}, Title: ${stream.title}`);
+      //   });
+      // } else {
+      //   console.log('No channels are currently live.');
+      // }
+      
+      // if (offline.length > 0) {
+      //   offline.forEach((channel) => {
+      //     console.log(`OFFLINE: Channel: ${channel} is not live.`);
+      //   });
+      // }
+
     } catch (error) {
       console.error('Failed to fetch stream data:', error);
     }
 
-    // Initialize the database
-    console.log("Initializing databases...", '\n');
+    // Initialize the database log message
+    console.log("Initializing databases...");
     
     // For each channel, this will initiate a new SQLite DB in the "data" directory. 
     for (const [index, channel] of cleanChannels.entries()) {
-      console.log(`Channel ${index}: ${channel}`);
+      console.log('\n' + `Channel ${index}: ${channel}`);
       const db = new DatabaseUtil(`${channel}`);
       await db.initDatabase();
-      channelDbMap.set(channel, db); // Store the database instance in the map
-      console.log(`Database initialized for channel: ${channel}`);
+      channelDbMap.set(channel, db); // Store the database instance in the map;
     };
 
-    console.log("Databases initialized successfully.", '\n');
+    console.log('\n' + "Databases initialized successfully." + '\n');
 
     // Handle messages from Twitch chat
     c.on("message", async (channel, tags, message) => {

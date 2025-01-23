@@ -2,7 +2,6 @@ import axios from "axios"; // Axios module (HTTP requests)
 
 import { getOAuthToken } from "./auth.js";
 import { incrementUp } from "./utils.js";
-import { DatabaseUtil } from "./database.js";
 
 export async function getTopChannels() {
   const token = await getOAuthToken();
@@ -52,71 +51,77 @@ export async function getStreamData(channels) {
     throw new Error('A non-empty array of channel names is required.');
   }
 
+  const apiUrl = 'https://api.twitch.tv/helix/streams';
+  
+  const queryParams = channels.map((channel) => `user_login=${channel}`).join('&');
   const token = await getOAuthToken();
   
   try {
-    const response = await axios.get("https://api.twitch.tv/helix/streams", {
+    const response = await fetch(`${apiUrl}?${queryParams}`, {
       headers: {
         Authorization: `Bearer ${token}`,
         "Client-ID": process.env.CLIENT_ID,
-      },
-      params: {
-        user_login: channels, // Pass the list of channel names
-      },
+      }
     })
-    return response.data.data; // Return the array of live streams
+
+    // If the response from the Twitch API 
+    if (!response.ok) {
+      throw new Error(`Twitch API request failed: ${response.statusText}`);
+    }
+
+    // Parse the JSON response
+    const data = await response.json();
+
+    console.log(data);
+
+    // Returns a map of main stream data such as Username, Title, viewer_count, etc. 
+    return data.data.map((stream) => ({  
+      id: stream.id,
+      title: stream.title,
+      game_name: stream.game_name,
+      started_at: stream.started_at,
+      viewer_count: stream.viewer_count,
+      user_id: stream.user_id,
+      thumbnail_url: stream.thumbnail_url,
+    }));
   } catch (error) {
     console.error('Error fetching stream data:', error);
-    throw error;
+    return [];
   }
 }
-    
+
+// This method returns 2 array lists, all live channels, and all offline channels. 
+// If there are no channels in the list, it will return 2 empty arrays. 
 export async function offlineOnlineStreams(channels) 
 {
-  try {
-      const liveChannels = await getStreamData(channels);
-      const liveChannelNames = liveChannels.map((stream) => stream.user_name.toLowerCase());
-
-      // Check for offline channels
-      const offlineChannels = channels.filter(
-        (channel) => !liveChannelNames.includes(channel.toLowerCase())
-      );
-
-        for (const stream of liveChannelNames) {
-          // Log live and offline channels
-          if (liveChannels.length > 0) {
-            liveChannels.forEach((stream) => {
-              console.log(
-                `LIVE: Channel: ${stream.user_name}, Viewers: ${stream.viewer_count}, Title: ${stream.title}`
-              );
-            });
-          } else {
-            console.log('No channels are currently live.');
-          }
-
-          if (offlineChannels.length > 0) {
-            offlineChannels.forEach((channel) => {
-              console.log(`OFFLINE: Channel: ${channel} is not live.`);
-            });
-          }
-
+  if (!channels || channels.length === 0) {
+    return { live: [], offline: [] };
+  } else {
+      try {
+        // Fetch live stream data
+        const liveChannels = await getStreamData(channels);
+    
+        // Map live channel names for comparison
+        const liveChannelNames = liveChannels.map((stream) => stream.user_name.toLowerCase());
+    
+        // Filter offline channels
+        const offlineChannels = channels.filter(
+          (channel) => !liveChannelNames.includes(channel.toLowerCase())
+        );
+    
         return {
           live: liveChannels,
           offline: offlineChannels,
         };
-      } 
-    } catch (error) {
-    console.error('Error fetching stream data:', error)
-    throw error;
+      } catch (error) {
+      console.error('Error fetching stream data:', error)
+      throw error;
+    }
   }
-}
-
-export async function parseStreamData(channels) {
-  
 }
 
 export default {
     getTopChannels,
     getStreamData,
-    offlineOnlineStreams
+    offlineOnlineStreams,
 }
