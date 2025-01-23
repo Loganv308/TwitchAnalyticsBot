@@ -6,4 +6,4 @@ This program was originally developed back in ~2021 using very rough Javascript 
 
 The intent and purpose of this project has been to make query-able databases for analytical purposes on something I indulge in commonly, Twitch livestreams. 
 
-Feel free to contribute code and add to this project as it's been a passion project for many months now that I'm actively contributing too. 
+Feel free to contribute code and add to this project as it's been a passion project for many months now to which I'm actively contributing. 
