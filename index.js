@@ -3,83 +3,78 @@ import { DatabaseUtil } from "./database.js"; // Database module
 import { getStreamData, getTopChannels, offlineOnlineStreams } from "./analytics.js";
 import utils, { formatDate, incrementUp } from "./utils.js";
 
+const initializeDatabases = async (channels) => {
+  const channelDbMap = new Map();
+
+  for (const channel of channels) {
+    const db = new DatabaseUtil(channel);
+    await db.initDatabase(); // Initialize the database (creates/open + tables)
+    channelDbMap.set(channel, db); // Store the instance in the map
+  }
+
+  return channelDbMap;
+};
+
 (async () => {
   try {
-    // Create a map to store the database for each channel
-    const channelDbMap = new Map();
+      // Create Twitch client
+      const c = new Client({
+        connection: {
+          secure: true,
+          reconnect: true,
+        },
+        channels: ["xqc","paymoneywubby", "zackrawrr"] // Add your desired channels here
+      });
 
-    // Create Twitch client
-    const c = new Client({
-      connection: {
-        secure: true,
-        reconnect: true,
-      },
-      channels: ["xqc","paymoneywubby", "zackrawrr"] // Add your desired channels here
-    });
+      // Connect to Twitch
+      await c.connect();
 
-    // Connect to Twitch
-    await c.connect();
-    console.log("Connected to Twitch chat.");
+      console.log("Connected to Twitch chat.");
 
-    const channels = c.getOptions().channels;
-    const cleanChannels = channels.map(channel => channel.replace(/^#/, ''));
+      const channels = c.getOptions().channels;
 
-    try {
-      console.log('Fetching stream data for channels:', cleanChannels);
+      const cleanChannels = channels.map(channel => channel.replace(/^#/, ''));
+
+      // Initialize the database log message
+      console.log('\n' + "Initializing databases..." + '\n');
+
+      const channelDbMap = await initializeDatabases(cleanChannels);
+
+      console.log('\n' + "Databases initialized successfully." + '\n');
 
       const rawStreamData = await getStreamData(cleanChannels);
-
-      if (rawStreamData.length === 0) {
-        console.log('No live streams found.');
-        return;
-      }
       
       const transformedData = rawStreamData.map((stream) => ({
-        streamID: stream.id,
+        id: stream.id,
         title: stream.title,
         game_name: stream.game_name, // Adjust as needed for your schema
-        startedAt: stream.started_at,
-        viewerCount: stream.viewer_count,
-        userId: stream.user_id,
-        thumbnailUrl: stream.thumbnail_url,
+        started_at: stream.started_at,
+        viewer_count: stream.viewer_count,
+        user_id: stream.user_id,
+        thumbnail_url: stream.thumbnail_url,
+        user_login: stream.user_name, // Ensure we know the channel for grouping
       }));
   
       console.log('Transformed Data:', transformedData);
-
-      // const streamDb = new DatabaseUtil 
       
-      // const { live, offline } = await offlineOnlineStreams(cleanChannels);
-
-      // if (live.length > 0) {
-      //   live.forEach((stream) => {
-      //     console.log(`LIVE: Channel: ${stream.user_name}, Viewers: ${stream.viewer_count}, Title: ${stream.title}`);
-      //   });
-      // } else {
-      //   console.log('No channels are currently live.');
-      // }
-      
-      // if (offline.length > 0) {
-      //   offline.forEach((channel) => {
-      //     console.log(`OFFLINE: Channel: ${channel} is not live.`);
-      //   });
-      // }
-
-    } catch (error) {
-      console.error('Failed to fetch stream data:', error);
-    }
-
-    // Initialize the database log message
-    console.log("Initializing databases...");
+      const groupedData = transformedData.reduce((acc, stream) => {
+        
+        if (!acc[stream.user_login]) {
+          acc[stream.user_login] = [];
+        }
+        acc[stream.user_login].push(stream);
+        console.log(acc)
+        return acc;
+      }, {});
     
-    // For each channel, this will initiate a new SQLite DB in the "data" directory. 
-    for (const [index, channel] of cleanChannels.entries()) {
-      console.log('\n' + `Channel ${index}: ${channel}`);
-      const db = new DatabaseUtil(`${channel}`);
-      await db.initDatabase();
-      channelDbMap.set(channel, db); // Store the database instance in the map;
-    };
-
-    console.log('\n' + "Databases initialized successfully." + '\n');
+      for (const [user_login, streams] of Object.entries(groupedData)) {
+        const db = channelDbMap.get(user_login);
+        if (db) {
+          console.log("This is the streams data: ", streams)
+          await db.insertStreamData(streams);
+          console.log(`Data inserted for channel: ${user_login}`);
+        } 
+      }
 
     // Handle messages from Twitch chat
     c.on("message", async (channel, tags, message) => {

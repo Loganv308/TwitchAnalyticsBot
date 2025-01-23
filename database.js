@@ -15,6 +15,7 @@ export class DatabaseUtil {
   constructor(dbName) {
     this.dbName = dbName;
     this.dbPath = path.join(__dirname, "data", `${dbName}_Chat.sqlite`);
+    this.db = null; // Placeholder for the SQLite database instance
   }
 
   // Initializes databases for all Twitch channels in Channel Arraylist (Index.js)
@@ -38,7 +39,7 @@ export class DatabaseUtil {
       // Sets the proper permission, otherwise file becomes non-writable
       fs.chmodSync(this.dbPath, 0o666);
 
-      console.log(`Database initialized for channel: ${dbName}`);
+      console.log(`Database initialized for channel: ${this.dbName}`);
 
       // Creates the tables in the databases
       await this.createTables();
@@ -60,23 +61,24 @@ export class DatabaseUtil {
     // and information around that message such as userName, timeStamp, etc. 
     const query = `
       CREATE TABLE IF NOT EXISTS Streams (
-        stream_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id INTEGER PRIMARY KEY NOT NULL,
+        user_login TEXT,
         title TEXT,
         game TEXT,
         started_at TEXT,
         view_count INTEGER,
         user_id INTEGER,
-        thumbnail_Url TEXT
+        thumbnail_Url TEXT;
       );
 
       CREATE TABLE IF NOT EXISTS Chat_messages (
         message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        stream_id INTEGER NOT NULL,
+        id INTEGER NOT NULL,
         user_id TEXT NOT NULL,
         username TEXT NOT NULL,
         message TEXT NOT NULL,
         timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (stream_id) REFERENCES Streams(stream_id)
+        FOREIGN KEY (id) REFERENCES Streams(id)
       );
     `;
     await this.db.exec(query);
@@ -92,15 +94,16 @@ export class DatabaseUtil {
       }
 
       const query = `
-        INSERT INTO Streams (stream_id, title, game, started_at, view_count, user_id, thumbnail_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT OR REPLACE INTO Streams (id, user_login, title, game, started_at, view_count, user_id, thumbnail_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
       `;
 
       for (const stream of streamData) {
         await this.db.run(query, [
-          stream.id,
-          stream.title,        // Maps to the 'title' column
-          stream.game,         // Maps to the 'game' column
+          stream.id,            // Maps to the 'id' column
+          stream.user_login,    // Maps to the 'user_login' column
+          stream.title,         // Maps to the 'title' column
+          stream.game_name,     // Maps to the 'game' column
           stream.started_at,    // Maps to the 'started_at' column
           stream.viewer_count,  // Maps to the 'view_count' column
           stream.user_id,       // Maps to the 'user_id' column

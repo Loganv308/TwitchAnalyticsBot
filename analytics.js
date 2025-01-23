@@ -83,6 +83,7 @@ export async function getStreamData(channels) {
       viewer_count: stream.viewer_count,
       user_id: stream.user_id,
       thumbnail_url: stream.thumbnail_url,
+      user_name: stream.user_login
     }));
   } catch (error) {
     console.error('Error fetching stream data:', error);
