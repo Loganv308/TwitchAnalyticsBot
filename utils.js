@@ -24,7 +24,6 @@ export function incrementDown() {
     return n; 
 }
 
-
 // Export function
 // ------------------------------------------------
 export default {

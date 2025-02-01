@@ -51,26 +51,25 @@ const initializeDatabases = async (channels) => {
         started_at: stream.started_at,
         viewer_count: stream.viewer_count,
         user_id: stream.user_id,
-        thumbnail_url: stream.thumbnail_url,
         user_login: stream.user_name, // Ensure we know the channel for grouping
       }));
   
       console.log('Transformed Data:', transformedData);
       
       const groupedData = transformedData.reduce((acc, stream) => {
-        
         if (!acc[stream.user_login]) {
           acc[stream.user_login] = [];
         }
         acc[stream.user_login].push(stream);
-        console.log(acc)
         return acc;
-      }, {});
+        }, {});
     
       for (const [user_login, streams] of Object.entries(groupedData)) {
         const db = channelDbMap.get(user_login);
+        
+        db.createTables();
+
         if (db) {
-          console.log("This is the streams data: ", streams)
           await db.insertStreamData(streams);
           console.log(`Data inserted for channel: ${user_login}`);
         } 
@@ -93,25 +92,15 @@ const initializeDatabases = async (channels) => {
         const twitchName = tags["display-name"]; // Twitch Display name
         const subscriber = tags["subscriber"]; // Subscriber status (T/F)
         const named_channel = channel.replace("#", "").toUpperCase(); // Channel name
-        
-        // // Insert into database
-        // await db.insertIntoDatabase(
-        //   randID,
-        //   formattedDate,
-        //   userID,
-        //   twitchName,
-        //   chatMessage,
-        //   named_channel
-        // );
 
         // Log the message
         if (subscriber == "1") {
           console.log(
-            `(${incrementUp()})(${named_channel})(${userID})(SUB) ${twitchName}: ${chatMessage}`
+            `(${incrementUp()})(${named_channel})(SUB) ${twitchName}: ${chatMessage}`
           );
         } else {
           console.log(
-            `(${incrementUp()})(${named_channel})(${userID}) ${twitchName}: ${chatMessage}`
+            `(${incrementUp()})(${named_channel}) ${twitchName}: ${chatMessage}`
           );
         }
       } catch (err) {

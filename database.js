@@ -59,29 +59,59 @@ export class DatabaseUtil {
     // The query below will create both tables we need to store data in. 
     // Streams is related to all the stream information, while Chat_messages is every chat message 
     // and information around that message such as userName, timeStamp, etc. 
-    const query = `
-      CREATE TABLE IF NOT EXISTS Streams (
-        id INTEGER PRIMARY KEY NOT NULL,
-        user_login TEXT,
-        title TEXT,
-        game TEXT,
-        started_at TEXT,
-        view_count INTEGER,
-        user_id INTEGER,
-        thumbnail_Url TEXT;
+
+    const streamTable = 'Streams';
+    const chatTable = 'Chat_messages';
+    
+    try {
+      this.db = await open({
+        filename: this.dbPath,
+        driver: sqlite3.Database,
+      });
+
+      const rows = await this.db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`, 
+        [streamTable, chatTable]
       );
 
-      CREATE TABLE IF NOT EXISTS Chat_messages (
-        message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        id INTEGER NOT NULL,
-        user_id TEXT NOT NULL,
-        username TEXT NOT NULL,
-        message TEXT NOT NULL,
-        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (id) REFERENCES Streams(id)
-      );
-    `;
-    await this.db.exec(query);
+      // console.log(rows);
+        
+      const existingTables = rows.map(row => row.name);
+
+      console.log(existingTables);
+
+      if (existingTables.includes(streamTable) && existingTables.includes(chatTable)) {
+          console.log(`Tables "${streamTable}" and "${chatTable}" exist.`);
+          return; // Exit function if tables exist
+      } else {
+          const query = `
+            CREATE TABLE IF NOT EXISTS Streams (
+              id INTEGER PRIMARY KEY NOT NULL,
+              user_login TEXT,
+              title TEXT,
+              game TEXT,
+              started_at TEXT,
+              view_count INTEGER,
+              user_id INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS Chat_messages (
+              message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              id INTEGER NOT NULL,
+              user_id TEXT NOT NULL,
+              username TEXT NOT NULL,
+              message TEXT NOT NULL,
+              timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (id) REFERENCES Streams(id)
+            );
+          `;
+          
+          await this.db.exec(query);
+          
+          console.log("Tables created successfully.");
+        }
+      } catch(error) {
+      console.error(error);
+    }
   }
 
   // This method inserts the data into each database.  
@@ -94,8 +124,8 @@ export class DatabaseUtil {
       }
 
       const query = `
-        INSERT OR REPLACE INTO Streams (id, user_login, title, game, started_at, view_count, user_id, thumbnail_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT OR REPLACE INTO Streams (id, user_login, title, game, started_at, view_count, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
       `;
 
       for (const stream of streamData) {
@@ -107,7 +137,6 @@ export class DatabaseUtil {
           stream.started_at,    // Maps to the 'started_at' column
           stream.viewer_count,  // Maps to the 'view_count' column
           stream.user_id,       // Maps to the 'user_id' column
-          stream.thumbnail_Url, // Maps to the 'thumbnail_url' column
         ]);
       }
 
