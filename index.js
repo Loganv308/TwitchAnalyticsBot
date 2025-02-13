@@ -1,17 +1,24 @@
 import { Client } from "tmi.js"; // This line is importing the tmi module. Short for "Twitch Messaging interface"
-import { DatabaseUtil } from "./database.js"; // Database module
+import { DatabaseUtil } from "./Database.js"; // Database module
 import { getStreamData, getTopChannels, offlineOnlineStreams } from "./analytics.js";
 import utils, { formatDate, incrementUp } from "./utils.js";
+import { ChatMessage } from "./ChatMessage.js";
+import { Channel } from "./Channel.js";
+
+const TIMESTAMP = new Date();
+
+// Work on this integrating this 
+const ChannelObject = new Channel();
 
 const initializeDatabases = async (channels) => {
   const channelDbMap = new Map();
 
   for (const channel of channels) {
     const db = new DatabaseUtil(channel);
-    await db.initDatabase(); // Initialize the database (creates/open + tables)
+    await db.initDatabase(); // Initialize the databases
+    await db.createTables(); // Create the tables within the database for each channel
     channelDbMap.set(channel, db); // Store the instance in the map
   }
-
   return channelDbMap;
 };
 
@@ -23,7 +30,7 @@ const initializeDatabases = async (channels) => {
           secure: true,
           reconnect: true,
         },
-        channels: ["xqc","paymoneywubby", "zackrawrr"] // Add your desired channels here
+        channels: ["xqc","paymoneywubby", "zackrawrr", "moonmoon", "summit1g"] // Add your desired channels here
       });
 
       // Connect to Twitch
@@ -43,66 +50,83 @@ const initializeDatabases = async (channels) => {
       console.log('\n' + "Databases initialized successfully." + '\n');
 
       const rawStreamData = await getStreamData(cleanChannels);
+
+      console.log(rawStreamData);
       
-      const transformedData = rawStreamData.map((stream) => ({
-        id: stream.id,
-        title: stream.title,
-        game_name: stream.game_name, // Adjust as needed for your schema
-        started_at: stream.started_at,
-        viewer_count: stream.viewer_count,
-        user_id: stream.user_id,
-        user_login: stream.user_name, // Ensure we know the channel for grouping
-      }));
-  
-      console.log('Transformed Data:', transformedData);
+      const channelObjects  = rawStreamData.map((stream) => {
+        return new Channel(
+            stream.id,           // Stream ID
+            stream.title,        // Title
+            stream.game_name || stream.game,    // Game
+            stream.started_at,   // Start Time
+            stream.viewer_count, // Viewer Count
+            stream.user_id,      // User ID
+            stream.user_name    // User name of channel
+        );
+      });
+
+      console.log('Transformed Data:', channelObjects);
       
-      const groupedData = transformedData.reduce((acc, stream) => {
+      const groupedData = channelObjects.reduce((acc, stream) => {
         if (!acc[stream.user_login]) {
           acc[stream.user_login] = [];
         }
         acc[stream.user_login].push(stream);
         return acc;
         }, {});
-    
+
+      console.log(groupedData)
+      
       for (const [user_login, streams] of Object.entries(groupedData)) {
         const db = channelDbMap.get(user_login);
-        
-        db.createTables();
+        await db.insertStreamData(streams);
+        console.log(`Data inserted for channel: ${user_login}`);
+      
+      }
 
-        if (db) {
-          await db.insertStreamData(streams);
-          console.log(`Data inserted for channel: ${user_login}`);
-        } 
+      const userToStreamMap = new Map();
+
+      for (const channel of channelObjects) {
+        userToStreamMap.set(channel.getUserLogin(), channel.getStreamID());
       }
 
     // Handle messages from Twitch chat
-    c.on("message", async (channel, tags, message) => {
+    c.on("message", async (channel, tags, messages) => {
       try {
-        const cleanChannel = channel.replace(/^#/, ''); // Remove '#' prefix
-        const db = channelDbMap.get(cleanChannel); // Get the database instance for the channel
+        const user_login = channel.replace("#", "").toLowerCase();
+        const db = new DatabaseUtil(user_login);
+        const isConnected = await db.openDatabase();
 
-        if (!db) {
-          console.error(`No database found for channel: ${cleanChannel}`);
-          return;
-        }
+        // Debugging Logs
+        // console.log("Tags Object:", tags);
+        // console.log("Raw Message Data:", messages);
+        // console.log("TIMESTAMP:", TIMESTAMP);
+        // console.log("userToStreamMap:", userToStreamMap);
+        console.log("user_login:", user_login);
 
-        const chatMessage = message.replace(/'/g, "''"); // Message
-        const formattedDate = utils.formatDate(new Date()); // Formatted date for Database
-        const userID = tags["user-id"]; // Twitch User ID
-        const twitchName = tags["display-name"]; // Twitch Display name
-        const subscriber = tags["subscriber"]; // Subscriber status (T/F)
-        const named_channel = channel.replace("#", "").toUpperCase(); // Channel name
+        const message_id = tags?.["id"] || "UNKNOWN_MESSAGE_ID";
+        const id = userToStreamMap?.get(user_login) ? Number(userToStreamMap.get(user_login)) : null;
+        const user_id = tags?.["user-id"] ? Number(tags["user-id"]) : 0;
+        const username = tags?.["display-name"] || "Anonymous";
+        const message = messages ? messages.replace(/'/g, "''") : "[EMPTY MESSAGE]";
+        const timestamp = TIMESTAMP ? utils.formatDate(TIMESTAMP) : new Date().toISOString();
+        const subscriber = tags?.["subscriber"] ? 1 : 0; // Convert boolean to 0/1
 
-        // Log the message
-        if (subscriber == "1") {
-          console.log(
-            `(${incrementUp()})(${named_channel})(SUB) ${twitchName}: ${chatMessage}`
-          );
+        console.log('\n' + message_id + " " + id + " " + user_id + " " + username + " " + message + " " + timestamp + " " + subscriber );
+        
+        const chatMessage = new ChatMessage(message_id, id, user_id, username, message, timestamp, subscriber);
+
+        if (isConnected) {
+          if (!chatMessage || typeof chatMessage !== "object") {
+            console.error("chatMessage is not an object:", chatMessage);
+            return;
+          } else {
+            db.insertChatData(chatMessage);
+          }
         } else {
-          console.log(
-            `(${incrementUp()})(${named_channel}) ${twitchName}: ${chatMessage}`
-          );
+          console.log("Database connection is not initialized.")
         }
+          
       } catch (err) {
         console.error("Error processing message:", err);
       }

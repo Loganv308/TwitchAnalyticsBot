@@ -12,10 +12,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export class DatabaseUtil {
   
   // Default constructor. DbName is the Channel name, dbPath goes to the database file path. 
-  constructor(dbName) {
+  constructor(dbName = null) {
     this.dbName = dbName;
     this.dbPath = path.join(__dirname, "data", `${dbName}_Chat.sqlite`);
-    this.db = null; // Placeholder for the SQLite database instance
+    this.connection = null; // Placeholder for the SQLite database instance
+  }
+
+  async openDatabase() {
+    this.connection = await open({
+      filename: this.dbPath,
+      driver: sqlite3.Database,
+    });
+
+    console.log(this.connection);
+
+    return this.connection !== null;
   }
 
   // Initializes databases for all Twitch channels in Channel Arraylist (Index.js)
@@ -31,7 +42,7 @@ export class DatabaseUtil {
       await fs.writeFile(this.dbPath, ''); 
       
       // Opens the SQLite database. 
-      this.db = await open({
+      this.connection = await open({
         filename: this.dbPath,
         driver: sqlite3.Database,
       });
@@ -48,36 +59,32 @@ export class DatabaseUtil {
       console.log(`Database for ${this.dbName} exists, opening...`)
 
       // Opens the SQLite database. This will only trigger if the DB's exist for each channel already. 
-      this.db = await open({
+      this.connection = await open({
         filename: this.dbPath,
         driver: sqlite3.Database,
       });
     }
   }
 
+  // The query below will create both tables we need to store data in. 
+  // Streams is related to all the stream information, while Chat_messages is every chat message 
+  // and information around that message such as userName, timeStamp, etc. 
   async createTables() {
-    // The query below will create both tables we need to store data in. 
-    // Streams is related to all the stream information, while Chat_messages is every chat message 
-    // and information around that message such as userName, timeStamp, etc. 
 
     const streamTable = 'Streams';
     const chatTable = 'Chat_messages';
     
     try {
-      this.db = await open({
+      this.connection = await open({
         filename: this.dbPath,
         driver: sqlite3.Database,
       });
 
-      const rows = await this.db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`, 
+      const rows = await this.connection.all(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`, 
         [streamTable, chatTable]
       );
 
-      // console.log(rows);
-        
       const existingTables = rows.map(row => row.name);
-
-      console.log(existingTables);
 
       if (existingTables.includes(streamTable) && existingTables.includes(chatTable)) {
           console.log(`Tables "${streamTable}" and "${chatTable}" exist.`);
@@ -85,27 +92,28 @@ export class DatabaseUtil {
       } else {
           const query = `
             CREATE TABLE IF NOT EXISTS Streams (
-              id INTEGER PRIMARY KEY NOT NULL,
+              id TEXT PRIMARY KEY ,
               user_login TEXT,
               title TEXT,
-              game TEXT,
+              game_name TEXT,
               started_at TEXT,
               view_count INTEGER,
               user_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS Chat_messages (
-              message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-              id INTEGER NOT NULL,
-              user_id TEXT NOT NULL,
-              username TEXT NOT NULL,
-              message TEXT NOT NULL,
-              timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+              message_id TEXT PRIMARY KEY,
+              id INTEGER,
+              user_id INTEGER,
+              username TEXT,
+              message TEXT,
+              timestamp TEXT,
+              subscriber INTEGER,
               FOREIGN KEY (id) REFERENCES Streams(id)
             );
           `;
           
-          await this.db.exec(query);
+          await this.connection.exec(query);
           
           console.log("Tables created successfully.");
         }
@@ -118,19 +126,19 @@ export class DatabaseUtil {
   async insertStreamData(streamData) {
     try {
       // If this can't find or connect to a DB, it will throw an error. 
-      if (!this.db) {
+      if (!this.connection) {
         console.error('Database connection not initialized.');
         return;
       }
 
       const query = `
-        INSERT OR REPLACE INTO Streams (id, user_login, title, game, started_at, view_count, user_id)
+        INSERT OR REPLACE INTO Streams (id, user_login, title, game_name, started_at, view_count, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?);
       `;
 
       for (const stream of streamData) {
-        await this.db.run(query, [
-          stream.id,            // Maps to the 'id' column
+        await this.connection.run(query, [
+          stream.id,     // Maps to the 'id' column
           stream.user_login,    // Maps to the 'user_login' column
           stream.title,         // Maps to the 'title' column
           stream.game_name,     // Maps to the 'game' column
@@ -139,16 +147,47 @@ export class DatabaseUtil {
           stream.user_id,       // Maps to the 'user_id' column
         ]);
       }
-
+      
     } catch(error) {
       console.error('Error inserting data into the database:', error);
     }
   }
 
+  async insertChatData(chatMessage) {
+    try {
+      if (!this.connection) {
+        console.error('Database connection not initialized.');
+        return;
+      }
+
+      const sanitizedData = [
+        chatMessage.message_id ? String(chatMessage.message_id) : "UNKNOWN_ID",
+        chatMessage.id ? parseInt(chatMessage.id, 10) : null,  
+        chatMessage.user_id ? parseInt(chatMessage.user_id, 10) : 0,  
+        chatMessage.username ? String(chatMessage.username) : "Anonymous",
+        chatMessage.message ? String(chatMessage.message) : "[EMPTY MESSAGE]",
+        chatMessage.timestamp ? String(chatMessage.timestamp) : new Date().toISOString(),
+        chatMessage.subscriber ? 1 : 0
+    ];
+
+      console.log(`Santized Data final: `, sanitizedData);
+
+      const query = `
+      INSERT INTO Chat_messages (message_id, id, user_id, username, message, timestamp, subscriber)
+      VALUES (?, ?, ?, ?, ?, ?, ?);
+      `;
+
+      await this.connection.run(query, sanitizedData);
+
+    } catch(error) {
+      console.error('Error inserting data into the database:', error)
+    }
+  }
+
   // This closes the DB connection when needed. 
   async closeDatabase() {
-    if (this.db) {
-      await this.db.close();
+    if (this.connection) {
+      await this.connection.close();
       console.log('Database connection closed.');
     }
   }
