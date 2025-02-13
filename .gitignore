@@ -1,4 +1,6 @@
 *.env
 *.sqlite
 node_modules
-index.js tags
+Extra Database Code
+To do next.txt
+Database UML.pdf
