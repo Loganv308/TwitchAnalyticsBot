@@ -2,7 +2,9 @@ import axios from "axios"; // Axios module (HTTP requests)
 
 import { getOAuthToken } from "./auth.js";
 import { incrementUp } from "./utils.js";
+import { DatabaseUtil } from "./Database.js";
 
+// The function below sorts all twitch channels by viewer count and displays the top 10. 
 export async function getTopChannels() {
   const token = await getOAuthToken();
   
@@ -46,6 +48,7 @@ export async function getTopChannels() {
     });
 }
 
+// The function below gets raw Stream Data using the Twitch API, this can then be manipulated and put into the database for each streamer for further use.
 export async function getStreamData(channels) {
   if (!Array.isArray(channels) || channels.length === 0) {
     throw new Error('A non-empty array of channel names is required.');
@@ -121,8 +124,16 @@ export async function offlineOnlineStreams(channels)
   }
 }
 
+// The function below grabs the total amount of entries from each table in the DB files. 
+export async function getTablesCount() {
+  const db = new DatabaseUtil();
+
+  db.openDatabase();
+}
+
 export default {
     getTopChannels,
     getStreamData,
     offlineOnlineStreams,
+    getTablesCount
 }
