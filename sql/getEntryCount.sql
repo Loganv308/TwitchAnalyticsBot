@@ -1,0 +1,1 @@
+SELECT Count(*) FROM {{TABLE_NAME}};

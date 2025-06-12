@@ -97,11 +97,6 @@ const initializeDatabases = async (channels) => {
         const db = new DatabaseUtil(user_login);
         const isConnected = await db.openDatabase();
 
-        // Debugging Logs
-        // console.log("Tags Object:", tags);
-        // console.log("Raw Message Data:", messages);
-        // console.log("TIMESTAMP:", TIMESTAMP);
-        // console.log("userToStreamMap:", userToStreamMap);
         console.log("user_login:", user_login);
 
         const message_id = tags?.["id"] || "UNKNOWN_MESSAGE_ID";
