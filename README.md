@@ -1,9 +1,9 @@
 ## TwitchAnalyticsBot
 
-TwitchAnalyticsBot is an under-development Javascript program that has been used to log chat messages in real-time from one or more twitch.tv livestream.
+TwitchAnalyticsBot is a JavaScript-based application currently in development, designed to log chat messages in real-time from one or more Twitch.tv livestreams.
 
-This program was originally developed back in ~2021 using very rough Javascript code, not my favorite language, but it worked well with the Twitch.tv API. I picked it back up late 2024 and since then, this project has been and revised and refactored many times over...
+Originally created around 2021, the initial version was built using a basic JavaScript implementation. While JavaScript is not my preferred language, it provided effective integration with the Twitch API. In late 2024, I resumed work on the project, and since then, it has undergone multiple rounds of refactoring and improvement.
 
-The intent and purpose of this project has been to make query-able databases for analytical purposes on something I indulge in commonly, Twitch livestreams. 
+The primary goal of this project is to create a queryable database for analytical insights into Twitch livestreams—a platform I frequently engage with.
 
-Feel free to contribute code and add to this project as it's been a passion project for many months now to which I'm actively contributing. 
+This has been a long-running passion project, and I continue to actively maintain and develop it. Contributions are welcome and encouraged.
