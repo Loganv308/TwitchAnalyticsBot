@@ -1,9 +1,9 @@
 import { Client } from "tmi.js"; // This line is importing the tmi module. Short for "Twitch Messaging interface"
-import { DatabaseUtil } from "./Database.js"; // Database module
-import { getStreamData, getTopChannels, offlineOnlineStreams } from "./analytics.js";
+import { DatabaseUtil } from "./src/Database.js"; // Database module
+import { getStreamData, getTopChannels, offlineOnlineStreams } from "./src/analytics.js";
 import utils, { formatDate, incrementUp } from "./utils.js";
-import { ChatMessage } from "./ChatMessage.js";
-import { Channel } from "./Channel.js";
+import { ChatMessage } from "./src/ChatMessage.js";
+import { Channel } from "./src/Channel.js";
 
 const TIMESTAMP = new Date();
 
