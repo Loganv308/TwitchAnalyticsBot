@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TwitchAnalyticsBot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0e0e10;
+    --surface:   #18181b;
+    --surface2:  #1f1f23;
+    --border:    #2a2a2f;
+    --purple:    #9147ff;
+    --purple-d:  #6318c0;
+    --green:     #00c980;
+    --red:       #eb4545;
+    --text:      #efeff1;
+    --muted:     #848494;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; min-height: 100vh; }
+
+  /* ── Layout ── */
+  .shell { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 52px 1fr; min-height: 100vh; }
+
+  /* ── Topbar ── */
+  header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px; font-weight: 500; }
+  .logo svg { color: var(--purple); }
+  .header-right { display: flex; align-items: center; gap: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  #clock { color: var(--muted); }
+
+  /* ── Sidebar ── */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 0;
+    overflow-y: auto;
+  }
+  .sidebar-label { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: .1em; padding: 0 16px 8px; text-transform: uppercase; }
+  .channel-btn {
+    width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+    padding: 9px 16px; display: flex; align-items: center; gap: 10px;
+    color: var(--muted); font-family: var(--sans); font-size: 13px;
+    transition: background .1s, color .1s;
+    border-left: 2px solid transparent;
+  }
+  .channel-btn:hover { background: var(--surface2); color: var(--text); }
+  .channel-btn.active { background: var(--surface2); color: var(--text); border-left-color: var(--purple); }
+  .ch-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+  .ch-dot.live { background: var(--green); }
+  .ch-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-viewers { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  /* ── Main ── */
+  main { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── Stream banner ── */
+  .stream-banner {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    flex-wrap: wrap;
+  }
+  .banner-left { display: flex; align-items: center; gap: 12px; }
+  .live-pill { font-family: var(--mono); font-size: 10px; font-weight: 500; background: var(--red); color: #fff; padding: 3px 8px; border-radius: 3px; letter-spacing: .08em; }
+  .offline-pill { font-family: var(--mono); font-size: 10px; background: var(--border); color: var(--muted); padding: 3px 8px; border-radius: 3px; }
+  .stream-title { font-size: 14px; font-weight: 500; color: var(--text); }
+  .stream-game { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .banner-right { display: flex; gap: 24px; }
+  .banner-stat { text-align: right; }
+  .banner-stat-val { font-family: var(--mono); font-size: 20px; font-weight: 500; color: var(--text); }
+  .banner-stat-label { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+  /* ── Metric cards ── */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .metric {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .metric-label { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-bottom: 4px; }
+  .metric-val { font-family: var(--mono); font-size: 22px; font-weight: 500; }
+  .metric-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  /* ── Two-col panel row ── */
+  .panel-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel-row.wide { grid-template-columns: 2fr 1fr; }
+
+  /* ── Panel ── */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .panel-body { padding: 14px 16px; flex: 1; }
+  .chart-wrap { position: relative; width: 100%; height: 200px; padding: 12px 16px; }
+
+  /* ── Chat feed ── */
+  .chat-feed { display: flex; flex-direction: column; gap: 0; max-height: 260px; overflow-y: auto; }
+  .chat-row { display: flex; gap: 8px; align-items: baseline; padding: 5px 16px; border-bottom: 1px solid var(--border); }
+  .chat-row:last-child { border-bottom: none; }
+  .chat-ts { font-family: var(--mono); font-size: 10px; color: var(--muted); flex-shrink: 0; width: 54px; }
+  .chat-user { font-size: 12px; font-weight: 500; flex-shrink: 0; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub-tag { font-family: var(--mono); font-size: 9px; background: #9147ff33; color: var(--purple); padding: 1px 4px; border-radius: 2px; margin-left: 3px; vertical-align: middle; }
+  .chat-msg { font-size: 13px; color: #c8c8d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px 16px; font-family: var(--mono); }
+
+  /* ── Top chatters ── */
+  .chatter-list { display: flex; flex-direction: column; gap: 6px; }
+  .chatter-row { display: flex; align-items: center; gap: 10px; }
+  .chatter-rank { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 18px; text-align: right; flex-shrink: 0; }
+  .chatter-bar-wrap { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .chatter-bar { height: 100%; background: var(--purple); border-radius: 2px; }
+  .chatter-name { font-size: 13px; width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+  .chatter-count { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 44px; text-align: right; flex-shrink: 0; }
+
+  /* ── Info table ── */
+  .info-table { width: 100%; border-collapse: collapse; }
+  .info-table td { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .info-table tr:last-child td { border-bottom: none; }
+  .info-table td:first-child { color: var(--muted); font-size: 12px; width: 40%; }
+  .info-table td:last-child { color: var(--text); font-family: var(--mono); font-size: 12px; text-align: right; }
+
+  /* ── Refresh indicator ── */
+  .refresh-bar { height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+  .refresh-fill { height: 100%; background: var(--purple); border-radius: 1px; transition: width linear; }
+
+  /* ── Error / loading states ── */
+  .loading { color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 24px; text-align: center; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="logo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/>
+      </svg>
+      TwitchAnalyticsBot
+    </div>
+    <div class="header-right">
+      <div class="refresh-bar" style="width:120px;">
+        <div class="refresh-fill" id="refreshFill" style="width:100%"></div>
+      </div>
+      <div class="pulse"></div>
+      <span id="clock"></span>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="sidebar-label">Channels</div>
+    <div id="channelList"><div class="loading">Loading...</div></div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main id="mainContent">
+    <div class="loading">Select a channel</div>
+  </main>
+
+</div>
+
+<script>
+const API     = 'http://localhost:3001/api';
+const POLL_MS = 5000;
+
+// ── state ──────────────────────────────────────────────────────────────────
+let activeChannel  = null;
+let allChannels    = [];
+let pollTimer      = null;
+let layoutBuilt    = false;  // true once the static shell has been injected
+let mpmChart       = null;   // single Chart.js instance, mutated in place
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000)    return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  catch { return ts; }
+}
+function hashColor(str) {
+  const p = ['#9147ff','#00c980','#ff6b6b','#fbbf24','#38bdf8','#fb923c','#a78bfa'];
+  let h = 0;
+  for (const c of str) h = (h + c.charCodeAt(0)) % p.length;
+  return p[h];
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el && el.textContent !== String(val)) el.textContent = val;
+}
+function setHtml(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = val;
+}
+
+// ── clock ──────────────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}, 1000);
+
+// ── refresh progress bar ───────────────────────────────────────────────────
+let refreshStart = Date.now();
+setInterval(() => {
+  const pct = Math.max(0, 100 - ((Date.now() - refreshStart) / POLL_MS * 100));
+  document.getElementById('refreshFill').style.width = pct + '%';
+}, 100);
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+async function loadChannels() {
+  try {
+    const data = await fetch(`${API}/channels`).then(r => r.json());
+    allChannels = data;
+    renderSidebar(data);
+    if (!activeChannel && data.length) switchChannel(data[0].cleanChannel); // ✅ only fires once on boot
+  } catch (error) {
+    console.log(error);
+    setHtml('channelList', '<div class="empty">Cannot reach API<br>Is index.js running?</div>');
+  }
+}
+
+function renderSidebar(channels) {
+  setHtml('channelList', channels.map(ch => `
+    <button class="channel-btn ${ch.cleanChannel === activeChannel ? 'active' : ''}"
+            onclick="switchChannel('${ch.cleanChannel}')">
+      <span class="ch-dot ${ch.online ? 'live' : ''}"></span>
+      <span class="ch-name">${ch.cleanChannel}</span>
+      <span class="ch-viewers">${ch.online ? fmtNum(ch.stream?.view_count) : ''}</span>
+    </button>
+  `).join(''));
+}
+
+function switchChannel(name) {
+  if (name === activeChannel && layoutBuilt) return;
+  
+  activeChannel = name;
+  layoutBuilt   = false;
+  seenMessageIds.clear(); // ✅ only clear when genuinely switching channels
+  
+  renderSidebar(allChannels);
+  clearInterval(pollTimer);
+  refreshStart = Date.now();
+  poll(name);
+  pollTimer = setInterval(() => {
+    refreshStart = Date.now();
+    poll(name);
+  }, POLL_MS);
+}
+
+// ── single poll cycle ──────────────────────────────────────────────────────
+async function poll(channel) {
+  try {
+    const [messages, mpm, topChatters, subRatio] = await Promise.all([
+      fetch(`${API}/channel/${channel}/messages?limit=30`).then(r => r.json()),
+      fetch(`${API}/channel/${channel}/stats/mpm`).then(r => r.json()),
+      fetch(`${API}/channel/${channel}/stats/top-chatters`).then(r => r.json()),
+      fetch(`${API}/channel/${channel}/stats/subscriber-ratio`).then(r => r.json()),
+    ]);
+    const chData = allChannels.find(c => c.channel === channel) || {};
+
+    if (!layoutBuilt) {
+      buildLayout(channel, chData);   // inject static HTML shell once
+      layoutBuilt = true;
+    }
+
+    // Always just patch the data — no innerHTML on mainContent ever again
+    patchData(channel, chData, messages, mpm, topChatters, subRatio);
+
+  } catch (e) {
+    if (!layoutBuilt) {
+      setHtml('mainContent', `<div class="loading">Error loading ${channel}</div>`);
+    }
+  }
+}
+
+// ── buildLayout — called ONCE per channel switch ───────────────────────────
+// Writes the static HTML skeleton with empty placeholder elements.
+// Every element that needs live updates gets a stable id.
+function buildLayout(channel, chData) {
+  if (mpmChart) { mpmChart.destroy(); mpmChart = null; }
+  const stream = chData.stream || {};
+
+  document.getElementById('mainContent').innerHTML = `
+    <div class="stream-banner">
+      <div class="banner-left">
+        <span id="livePill" class="offline-pill">OFFLINE</span>
+        <div>
+          <div class="stream-title" id="streamTitle">${escHtml(stream.title || channel)}</div>
+          <div class="stream-game"  id="streamGame">${escHtml(stream.game_name || '—')}</div>
+        </div>
+      </div>
+      <div class="banner-right">
+        <div class="banner-stat">
+          <div class="banner-stat-val"  id="bannerViewers">—</div>
+          <div class="banner-stat-label">viewers</div>
+        </div>
+        <div class="banner-stat">
+          <div class="banner-stat-val"  id="bannerMsgs">—</div>
+          <div class="banner-stat-label">messages logged</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-label">Total messages</div>
+        <div class="metric-val" id="metTotalMsgs">—</div>
+        <div class="metric-sub">all time in DB</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Unique chatters</div>
+        <div class="metric-val" id="metUnique">—</div>
+        <div class="metric-sub">distinct users</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Subscriber messages</div>
+        <div class="metric-val" id="metSubMsgs">—</div>
+        <div class="metric-sub" id="metSubPct">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Cur. msgs / min</div>
+        <div class="metric-val" id="metMpm">—</div>
+        <div class="metric-sub">last recorded minute</div>
+      </div>
+    </div>
+
+    <div class="panel-row wide">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Messages per minute — last 30 min</span></div>
+        <div class="chart-wrap"><canvas id="mpmCanvas"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Top chatters</span></div>
+        <div class="panel-body"><div class="chatter-list" id="chatterList"></div></div>
+      </div>
+    </div>
+
+    <div class="panel-row">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Recent chat (live)</span></div>
+        <div class="chat-feed" id="chatFeed"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Stream info</span></div>
+        <div class="panel-body">
+          <table class="info-table">
+            <tr><td>Channel</td>   <td>${escHtml(channel)}</td></tr>
+            <tr><td>Game</td>      <td id="infoGame">—</td></tr>
+            <tr><td>Stream ID</td> <td id="infoId">—</td></tr>
+            <tr><td>User ID</td>   <td id="infoUserId">—</td></tr>
+            <tr><td>Started at</td><td id="infoStarted">—</td></tr>
+            <tr><td>Sub ratio</td> <td id="infoSubPct">—</td></tr>
+            <tr><td>DB file</td>   <td>${escHtml(channel)}_Chat.sqlite</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Create the Chart.js instance once against the stable canvas
+  mpmChart = new Chart(document.getElementById('mpmCanvas'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: '#9147ff',
+        backgroundColor: 'rgba(145,71,255,0.12)',
+        fill: true, tension: 0.4, pointRadius: 2,
+        pointBackgroundColor: '#9147ff', borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#18181b', borderColor: '#2a2a2f', borderWidth: 1,
+          titleColor: '#848494', bodyColor: '#efeff1',
+          callbacks: { label: ctx => ` ${ctx.parsed.y} msgs` }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#848494', font: { family: "'IBM Plex Mono'", size: 10 }, maxRotation: 0 }, grid: { color: '#2a2a2f' } },
+        y: { beginAtZero: true, ticks: { color: '#848494', font: { family: "'IBM Plex Mono'", size: 10 } }, grid: { color: '#2a2a2f' } }
+      }
+    }
+  });
+}
+
+// ── patchData — called every poll, NEVER touches mainContent.innerHTML ─────
+function patchData(channel, chData, messages, mpm, topChatters, subRatio) {
+  const stream      = chData.stream || {};
+  const stats       = chData.stats  || {};
+  const isLive      = chData.online;
+  const totalMsgs   = stats.total_messages        || 0;
+  const uniqueUsers = stats.unique_chatters        || 0;
+  const subMsgs     = stats.subscriber_messages   || 0;
+  const subPct      = totalMsgs ? Math.round(subMsgs / totalMsgs * 100) : 0;
+  const curMpm      = mpm.length ? mpm[mpm.length - 1].count : '—';
+
+  // Banner
+  const pill = document.getElementById('livePill');
+  if (pill) {
+    pill.textContent  = isLive ? 'LIVE' : 'OFFLINE';
+    pill.className    = isLive ? 'live-pill' : 'offline-pill';
+  }
+  setText('streamTitle',  stream.title     || channel);
+  setText('streamGame',   stream.game_name || '—');
+  setText('bannerViewers', fmtNum(stream.view_count));
+  setText('bannerMsgs',    fmtNum(totalMsgs));
+
+  // Metric cards
+  setText('metTotalMsgs', fmtNum(totalMsgs));
+  setText('metUnique',    fmtNum(uniqueUsers));
+  setText('metSubMsgs',   fmtNum(subMsgs));
+  setText('metSubPct',    subPct + '% of all chat');
+  setText('metMpm',       curMpm);
+
+  // Info table
+  setText('infoGame',    stream.game_name  || '—');
+  setText('infoId',      stream.id         || '—');
+  setText('infoUserId',  stream.user_id    || '—');
+  setText('infoStarted', fmtTs(stream.started_at));
+  setText('infoSubPct',  subPct + '%');
+
+  // MPM chart — mutate the existing Chart.js instance's data arrays
+  if (mpmChart) {
+    mpmChart.data.labels                  = mpm.map(r => r.minute ? r.minute.slice(11,16) : '');
+    mpmChart.data.datasets[0].data        = mpm.map(r => r.count);
+    mpmChart.update('none');  // 'none' = skip animation on data updates so it feels live, not jumpy
+  }
+
+  // Chat feed — prepend new messages rather than replacing everything
+  patchChatFeed(messages);
+
+  // Top chatters
+  const max = topChatters[0]?.message_count || 1;
+  setHtml('chatterList', topChatters.length
+    ? topChatters.map((c, i) => `
+        <div class="chatter-row">
+          <span class="chatter-rank">${i + 1}</span>
+          <span class="chatter-name" style="color:${hashColor(c.username)}">${escHtml(c.username)}</span>
+          <div class="chatter-bar-wrap">
+            <div class="chatter-bar" style="width:${Math.round(c.message_count / max * 100)}%"></div>
+          </div>
+          <span class="chatter-count">${fmtNum(c.message_count)}</span>
+        </div>`).join('')
+    : '<div class="empty">No data yet.</div>'
+  );
+}
+
+// ── Chat feed — only prepend rows that aren't already shown ───────────────
+const seenMessageIds = new Set();
+
+function patchChatFeed(messages) {
+  const feed = document.getElementById('chatFeed');
+  if (!feed) return;
+
+  if (!messages.length) {
+    if (!seenMessageIds.size) feed.innerHTML = '<div class="empty">No messages in DB yet.</div>';
+    return;
+  }
+
+  // Remove the "empty" placeholder on first real message
+  const empty = feed.querySelector('.empty');
+  if (empty) empty.remove();
+
+  // Find messages we haven't rendered yet (API returns newest-first)
+  const newRows = messages.filter(m => !seenMessageIds.has(m.message_id));
+
+  newRows.forEach(m => {
+    seenMessageIds.add(m.message_id);
+    const row = document.createElement('div');
+    row.className = 'chat-row';
+    row.innerHTML = `
+      <span class="chat-ts">${fmtTs(m.timestamp)}</span>
+      <span class="chat-user" style="color:${hashColor(m.username || '')}">${escHtml(m.username || 'anon')}</span>
+      ${m.subscriber ? '<span class="sub-tag">sub</span>' : ''}
+      <span class="chat-msg">${escHtml(m.message || '')}</span>`;
+    feed.prepend(row);   // newest at top
+  });
+
+  // Cap the feed at 60 rows so it doesn't grow forever
+  while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+loadChannels();
+setInterval(loadChannels, 30000);  // refresh sidebar viewer counts every 30s
+</script>
+</body>
+</html>

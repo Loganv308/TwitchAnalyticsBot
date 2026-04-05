@@ -1,8 +1,8 @@
 import axios from "axios"; // Axios module (HTTP requests)
 
-import { getOAuthToken } from "../auth.js";
-import { incrementUp } from "../utils.js";
-import { DatabaseUtil } from "../Database.js";
+import { getOAuthToken } from "./auth.js";
+import { incrementUp } from "./utils.js";
+import { DatabaseUtil } from "./Database.js";
 
 // The function below sorts all twitch channels by viewer count and displays the top 10. 
 export async function getTopChannels() {

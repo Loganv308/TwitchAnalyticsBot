@@ -24,8 +24,6 @@ export class DatabaseUtil {
       driver: sqlite3.Database,
     });
 
-    console.log(this.connection);
-
     return this.connection !== null;
   }
 
@@ -169,8 +167,6 @@ export class DatabaseUtil {
         chatMessage.timestamp ? String(chatMessage.timestamp) : new Date().toISOString(),
         chatMessage.subscriber ? 1 : 0
     ];
-
-      console.log(`Santized Data final: `, sanitizedData);
 
       const query = `
       INSERT INTO Chat_messages (message_id, id, user_id, username, message, timestamp, subscriber)

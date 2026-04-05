@@ -1,138 +1,225 @@
-import { Client } from "tmi.js"; // This line is importing the tmi module. Short for "Twitch Messaging interface"
-import { DatabaseUtil } from "./src/Database.js"; // Database module
-import { getStreamData, getTopChannels, offlineOnlineStreams } from "./src/analytics.js";
-import utils, { formatDate, incrementUp } from "./utils.js";
+import { Client } from "tmi.js";
+import express from "express";
+import cors from "cors";
+import { DatabaseUtil } from "./src/Database.js";
+import { getStreamData } from "./src/analytics.js";
+import utils from "./src/utils.js";
 import { ChatMessage } from "./src/ChatMessage.js";
 import { Channel } from "./src/Channel.js";
 
-const TIMESTAMP = new Date();
+// ─── Config ────────────────────────────────────────────────────────────────
+const CHANNELS = ["xqc", "paymoneywubby", "zackrawrr", "moonmoon", "summit1g"];
+const API_PORT  = 3001;
 
-// Work on this integrating this 
-const ChannelObject = new Channel();
+// ─── Express API ───────────────────────────────────────────────────────────
+const app = express();
+app.use(cors());
+app.use(express.static("public")); // serves public/dashboard.html
 
+// Helper: open a fresh read connection to a channel's sqlite file
+async function getConn(channel) {
+
+  const db = new DatabaseUtil(channel);
+  try {
+    await db.openDatabase();
+    // Verify the tables actually exist before returning
+    const check = await db.connection.get(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='Chat_messages'`
+    );
+    if (!check) return null; // DB exists but tables aren't created yet
+    return db.connection;
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/channels — sidebar stats for every channel
+app.get("/api/channels", async (req, res) => {
+  const results = [];
+
+  for (const channel of CHANNELS) {
+
+    const cleanChannel = channel.replace(/^#/, "").toLowerCase();
+
+    const conn = await getConn(cleanChannel);
+    if (!conn) {
+      results.push({ cleanChannel, online: false, error: "DB not found" });
+      continue;
+    }
+    const stats = await conn.get(`
+      SELECT
+        COUNT(*)                                            AS total_messages,
+        COUNT(DISTINCT user_id)                             AS unique_chatters,
+        SUM(CASE WHEN subscriber = 1 THEN 1 ELSE 0 END)    AS subscriber_messages
+      FROM Chat_messages
+    `);
+    const stream = await conn.get(
+      `SELECT * FROM Streams ORDER BY rowid DESC LIMIT 1`
+    );
+    await conn.close();
+    results.push({ cleanChannel, online: !!stream, stats, stream: stream || null });
+  }
+  res.json(results);
+});
+
+// GET /api/channel/:name/messages?limit=50&offset=0
+app.get("/api/channel/:name/messages", async (req, res) => {
+  const conn = await getConn(req.params.name);
+  if (!conn) return res.status(404).json({ error: "DB not found" });
+  const limit  = Math.min(parseInt(req.query.limit)  || 50, 200);
+  const offset = parseInt(req.query.offset) || 0;
+  const rows = await conn.all(
+    `SELECT * FROM Chat_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+    [limit, offset]
+  );
+  await conn.close();
+  res.json(rows);
+});
+
+// GET /api/channel/:name/stats/mpm — messages per minute, last 30 min
+app.get("/api/channel/:name/stats/mpm", async (req, res) => {
+  const conn = await getConn(req.params.name);
+  if (!conn) return res.status(404).json({ error: "DB not found" });
+  const rows = await conn.all(`
+    SELECT
+      strftime('%Y-%m-%dT%H:%M', timestamp) AS minute,
+      COUNT(*)                              AS count
+    FROM Chat_messages
+    WHERE timestamp >= datetime('now', '-30 minutes')
+    GROUP BY minute
+    ORDER BY minute ASC
+  `);
+  await conn.close();
+  res.json(rows);
+});
+
+// GET /api/channel/:name/stats/top-chatters
+app.get("/api/channel/:name/stats/top-chatters", async (req, res) => {
+  const conn = await getConn(req.params.name);
+  if (!conn) return res.status(404).json({ error: "DB not found" });
+  const rows = await conn.all(`
+    SELECT username, COUNT(*) AS message_count
+    FROM Chat_messages
+    GROUP BY username
+    ORDER BY message_count DESC
+    LIMIT 10
+  `);
+  await conn.close();
+  res.json(rows);
+});
+
+// GET /api/channel/:name/stats/subscriber-ratio
+app.get("/api/channel/:name/stats/subscriber-ratio", async (req, res) => {
+  const conn = await getConn(req.params.name);
+  if (!conn) return res.status(404).json({ error: "DB not found" });
+  const row = await conn.get(`
+    SELECT
+      SUM(CASE WHEN subscriber = 1 THEN 1 ELSE 0 END) AS sub_messages,
+      SUM(CASE WHEN subscriber = 0 THEN 1 ELSE 0 END) AS non_sub_messages,
+      COUNT(*)                                         AS total
+    FROM Chat_messages
+  `);
+  await conn.close();
+  res.json(row);
+});
+
+// Start API server
+app.listen(API_PORT, () => {
+  console.log(`\nAPI server running  →  http://localhost:${API_PORT}`);
+  console.log(`Dashboard           →  http://localhost:${API_PORT}/dashboard.html\n`);
+});
+
+// ─── Database initializer ──────────────────────────────────────────────────
 const initializeDatabases = async (channels) => {
   const channelDbMap = new Map();
-
   for (const channel of channels) {
     const db = new DatabaseUtil(channel);
-    await db.initDatabase(); // Initialize the databases
-    await db.createTables(); // Create the tables within the database for each channel
-    channelDbMap.set(channel, db); // Store the instance in the map
+    await db.initDatabase();
+    await db.createTables();
+    channelDbMap.set(channel, db);
   }
   return channelDbMap;
 };
 
+// ─── Twitch bot ────────────────────────────────────────────────────────────
 (async () => {
   try {
-      // Create Twitch client
-      const c = new Client({
-        connection: {
-          secure: true,
-          reconnect: true,
-        },
-        channels: ["xqc","paymoneywubby", "zackrawrr", "moonmoon", "summit1g"] // Add your desired channels here
-      });
+    const c = new Client({
+      connection: { secure: true, reconnect: true },
+      channels: CHANNELS,
+    });
 
-      // Connect to Twitch
-      await c.connect();
+    await c.connect();
+    console.log("Connected to Twitch chat.");
 
-      console.log("Connected to Twitch chat.");
+    const cleanChannels = c.getOptions().channels.map(ch => ch.replace(/^#/, ""));
 
-      const channels = c.getOptions().channels;
+    console.log("\nInitializing databases...\n");
+    const channelDbMap = await initializeDatabases(cleanChannels);
+    console.log("Databases initialized.\n");
 
-      const cleanChannels = channels.map(channel => channel.replace(/^#/, ''));
+    // Fetch stream metadata and insert into Streams table
+    const rawStreamData = await getStreamData(cleanChannels);
 
-      // Initialize the database log message
-      console.log('\n' + "Initializing databases..." + '\n');
+    const channelObjects = rawStreamData.map(stream => new Channel(
+      stream.id,
+      stream.title,
+      stream.game_name || stream.game,
+      stream.started_at,
+      stream.viewer_count,
+      stream.user_id,
+      stream.user_name,
+    ));
 
-      const channelDbMap = await initializeDatabases(cleanChannels);
+    const groupedData = channelObjects.reduce((acc, stream) => {
+      if (!acc[stream.user_login]) acc[stream.user_login] = [];
+      acc[stream.user_login].push(stream);
+      return acc;
+    }, {});
 
-      console.log('\n' + "Databases initialized successfully." + '\n');
-
-      const rawStreamData = await getStreamData(cleanChannels);
-
-      console.log(rawStreamData);
-      
-      const channelObjects  = rawStreamData.map((stream) => {
-        return new Channel(
-            stream.id,           // Stream ID
-            stream.title,        // Title
-            stream.game_name || stream.game,    // Game
-            stream.started_at,   // Start Time
-            stream.viewer_count, // Viewer Count
-            stream.user_id,      // User ID
-            stream.user_name    // User name of channel
-        );
-      });
-
-      console.log('Transformed Data:', channelObjects);
-      
-      const groupedData = channelObjects.reduce((acc, stream) => {
-        if (!acc[stream.user_login]) {
-          acc[stream.user_login] = [];
-        }
-        acc[stream.user_login].push(stream);
-        return acc;
-        }, {});
-
-      console.log(groupedData)
-      
-      for (const [user_login, streams] of Object.entries(groupedData)) {
-        const db = channelDbMap.get(user_login);
+    for (const [user_login, streams] of Object.entries(groupedData)) {
+      const db = channelDbMap.get(user_login);
+      if (db) {
         await db.insertStreamData(streams);
-        console.log(`Data inserted for channel: ${user_login}`);
-      
+        console.log(`Stream data inserted for: ${user_login}`);
       }
+    }
 
-      const userToStreamMap = new Map();
+    // Map user_login → stream ID for tagging chat messages
+    const userToStreamMap = new Map();
+    for (const channel of channelObjects) {
+      userToStreamMap.set(channel.getUserLogin(), channel.getStreamID());
+    }
 
-      for (const channel of channelObjects) {
-        userToStreamMap.set(channel.getUserLogin(), channel.getStreamID());
-      }
-
-    // Handle messages from Twitch chat
+    // ── Message handler ──────────────────────────────────────────────────
     c.on("message", async (channel, tags, messages) => {
       try {
         const user_login = channel.replace("#", "").toLowerCase();
-        const db = new DatabaseUtil(user_login);
-        const isConnected = await db.openDatabase();
+        const db = channelDbMap.get(user_login);
+        if (!db) return;
 
-        console.log("user_login:", user_login);
+        const message_id = tags?.["id"]           || "UNKNOWN_MESSAGE_ID";
+        const id         = userToStreamMap.get(user_login)
+                             ? Number(userToStreamMap.get(user_login))
+                             : null;
+        const user_id    = tags?.["user-id"]       ? Number(tags["user-id"]) : 0;
+        const username   = tags?.["display-name"]  || "Anonymous";
+        const message    = messages
+                             ? messages.replace(/'/g, "''")
+                             : "[EMPTY MESSAGE]";
+        const timestamp  = utils.formatDate(new Date());
+        const subscriber = tags?.["subscriber"]    ? 1 : 0;
 
-        const message_id = tags?.["id"] || "UNKNOWN_MESSAGE_ID";
-        const id = userToStreamMap?.get(user_login) ? Number(userToStreamMap.get(user_login)) : null;
-        const user_id = tags?.["user-id"] ? Number(tags["user-id"]) : 0;
-        const username = tags?.["display-name"] || "Anonymous";
-        const message = messages ? messages.replace(/'/g, "''") : "[EMPTY MESSAGE]";
-        const timestamp = TIMESTAMP ? utils.formatDate(TIMESTAMP) : new Date().toISOString();
-        const subscriber = tags?.["subscriber"] ? 1 : 0; // Convert boolean to 0/1
+        const chatMessage = new ChatMessage(
+          message_id, id, user_id, username, message, timestamp, subscriber
+        );
 
-        console.log('\n' + message_id + " " + id + " " + user_id + " " + username + " " + message + " " + timestamp + " " + subscriber );
-        
-        const chatMessage = new ChatMessage(message_id, id, user_id, username, message, timestamp, subscriber);
+        await db.insertChatData(chatMessage);       
 
-        if (isConnected) {
-          if (!chatMessage || typeof chatMessage !== "object") {
-            console.error("chatMessage is not an object:", chatMessage);
-            return;
-          } else {
-            db.insertChatData(chatMessage);
-          }
-        } else {
-          console.log("Database connection is not initialized.")
-        }
-          
       } catch (err) {
         console.error("Error processing message:", err);
       }
     });
-
-    // https://stackoverflow.com/questions/41292609/typeerror-callback-argument-must-be-a-function
-    // (() => <function>, interval), this is necessary because setInterval expects a function as 
-    // its first argument. Therefore, adding in () => db.processFile wraps it in a function, then triggers it. 
-    
-    // TODO: FIX THIS BELOW STATEMENT
-    //setInterval(() => db.processDBFile(), 10000);
 
   } catch (err) {
     console.error("Error during initialization:", err);
