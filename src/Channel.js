@@ -20,7 +20,6 @@ export class Channel {
 
     // Gets the data from the channel
     getChannelsData(){
-
     }
     
     // Without these getters, there isn't a good way (that I know of) to access the StreamID value which is needed for other tables in the Database. 
