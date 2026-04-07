@@ -69,7 +69,8 @@ export async function getStreamData(channels) {
 
     // If the response from the Twitch API 
     if (!response.ok) {
-      throw new Error(`Twitch API request failed: ${response.statusText}`);
+      const body = await response.text();
+      throw new Error(`Twitch API request failed: ${response.statusText} — ${body}`);
     }
 
     // Parse the JSON response
@@ -86,7 +87,8 @@ export async function getStreamData(channels) {
       viewer_count: stream.viewer_count,
       user_id: stream.user_id,
       thumbnail_url: stream.thumbnail_url,
-      user_name: stream.user_login
+      user_name: stream.user_login,
+      user_login: stream.user_login
     }));
   } catch (error) {
     console.error('Error fetching stream data:', error);

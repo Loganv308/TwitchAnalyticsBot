@@ -16,6 +16,26 @@ const app = express();
 app.use(cors());
 app.use(express.static("public")); // serves public/dashboard.html
 
+// Cache at the top of index.js
+let liveMap = new Map();
+
+let channelDbMap = new Map();
+
+// Refresh it every 60 seconds
+async function refreshLiveMap() {
+  try {
+    const liveStreams = await getStreamData(CHANNELS);
+    liveMap = new Map(liveStreams.map(s => [s.user_login.toLowerCase(), s]));
+    console.log(`Live map refreshed: ${liveMap.size} channels live`);
+  } catch (err) {
+    console.error("Failed to refresh live map, keeping existing data:", err.message);
+    // ✅ liveMap stays as-is, no data loss
+  }
+}
+
+refreshLiveMap();
+setInterval(refreshLiveMap, 60000);
+
 // Helper: open a fresh read connection to a channel's sqlite file
 async function getConn(channel) {
 
@@ -40,39 +60,43 @@ app.get("/api/channels", async (req, res) => {
   for (const channel of CHANNELS) {
 
     const cleanChannel = channel.replace(/^#/, "").toLowerCase();
+    
+    const isLive = liveMap.has(cleanChannel); 
+    
+    const stream = liveMap.get(cleanChannel) || null;
 
     const conn = await getConn(cleanChannel);
     if (!conn) {
       results.push({ cleanChannel, online: false, error: "DB not found" });
       continue;
     }
+
     const stats = await conn.get(`
       SELECT
-        COUNT(*)                                            AS total_messages,
-        COUNT(DISTINCT user_id)                             AS unique_chatters,
-        SUM(CASE WHEN subscriber = 1 THEN 1 ELSE 0 END)    AS subscriber_messages
+        COUNT(*) AS total_messages,
+        COUNT(DISTINCT user_id) AS unique_chatters,
+        SUM(CASE WHEN subscriber = 1 THEN 1 ELSE 0 END) AS subscriber_messages
       FROM Chat_messages
     `);
-    const stream = await conn.get(
-      `SELECT * FROM Streams ORDER BY rowid DESC LIMIT 1`
-    );
+
     await conn.close();
-    results.push({ cleanChannel, online: !!stream, stats, stream: stream || null });
+    results.push({ cleanChannel, online: isLive, stats, stream });
   }
   res.json(results);
 });
 
 // GET /api/channel/:name/messages?limit=50&offset=0
 app.get("/api/channel/:name/messages", async (req, res) => {
-  const conn = await getConn(req.params.name);
-  if (!conn) return res.status(404).json({ error: "DB not found" });
-  const limit  = Math.min(parseInt(req.query.limit)  || 50, 200);
-  const offset = parseInt(req.query.offset) || 0;
-  const rows = await conn.all(
+  const db = channelDbMap.get(req.params.name);
+  if (!db) return res.status(404).json({ error: "DB not found" });
+  
+  const limit  = Math.min(parseInt(req.query.limit) || 50, 200); // ✅
+  const offset = parseInt(req.query.offset) || 0;  
+
+  const rows = await db.connection.all(
     `SELECT * FROM Chat_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
     [limit, offset]
   );
-  await conn.close();
   res.json(rows);
 });
 
@@ -131,7 +155,7 @@ app.listen(API_PORT, () => {
 
 // ─── Database initializer ──────────────────────────────────────────────────
 const initializeDatabases = async (channels) => {
-  const channelDbMap = new Map();
+
   for (const channel of channels) {
     const db = new DatabaseUtil(channel);
     await db.initDatabase();

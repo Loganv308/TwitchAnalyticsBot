@@ -1,5 +1,7 @@
 *.env
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 node_modules
 Extra Database Code
 To do next.txt

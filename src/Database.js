@@ -23,99 +23,65 @@ export class DatabaseUtil {
       filename: this.dbPath,
       driver: sqlite3.Database,
     });
-
+    // ✅ WAL mode on every open — allows simultaneous reads and writes
+    await this.connection.run('PRAGMA journal_mode=WAL;');
+    await this.connection.run('PRAGMA busy_timeout=5000;'); // ✅ wait up to 5s instead of immediately erroring
     return this.connection !== null;
   }
 
   // Initializes databases for all Twitch channels in Channel Arraylist (Index.js)
   async initDatabase() {
-    
-    // Ensures the directory exists in project directory, otherwise, creates a new one (/data)
     await fs.ensureDir(path.dirname(this.dbPath));
+    const isNew = !fs.existsSync(this.dbPath);
     
-    // If DB doesn't exist, will create a new one along with setting the proper permissions.
-    if (!fs.existsSync(this.dbPath)) {
-      
-      // Writes the new blank file (project_directory\data\{streamer}Database.db)
-      await fs.writeFile(this.dbPath, ''); 
-      
-      // Opens the SQLite database. 
-      this.connection = await open({
-        filename: this.dbPath,
-        driver: sqlite3.Database,
-      });
-
-      // Sets the proper permission, otherwise file becomes non-writable
+    if (isNew) {
+      await fs.writeFile(this.dbPath, '');
       fs.chmodSync(this.dbPath, 0o666);
-
       console.log(`Database initialized for channel: ${this.dbName}`);
-
-      // Creates the tables in the databases
-      await this.createTables();
+    } else {
+      console.log(`Database for ${this.dbName} exists, opening...`);
     }
-    else {
-      console.log(`Database for ${this.dbName} exists, opening...`)
 
-      // Opens the SQLite database. This will only trigger if the DB's exist for each channel already. 
-      this.connection = await open({
-        filename: this.dbPath,
-        driver: sqlite3.Database,
-      });
-    }
+    await this.openDatabase(); // ✅ always use openDatabase, WAL is set there
   }
 
   // The query below will create both tables we need to store data in. 
   // Streams is related to all the stream information, while Chat_messages is every chat message 
   // and information around that message such as userName, timeStamp, etc. 
   async createTables() {
-
-    const streamTable = 'Streams';
-    const chatTable = 'Chat_messages';
-    
     try {
-      this.connection = await open({
-        filename: this.dbPath,
-        driver: sqlite3.Database,
-      });
-
-      const rows = await this.connection.all(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`, 
-        [streamTable, chatTable]
+      const rows = await this.connection.all(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`,
+        ['Streams', 'Chat_messages']
       );
-
       const existingTables = rows.map(row => row.name);
-
-      if (existingTables.includes(streamTable) && existingTables.includes(chatTable)) {
-          console.log(`Tables "${streamTable}" and "${chatTable}" exist.`);
-          return; // Exit function if tables exist
-      } else {
-          const query = `
-            CREATE TABLE IF NOT EXISTS Streams (
-              id TEXT PRIMARY KEY ,
-              user_login TEXT,
-              title TEXT,
-              game_name TEXT,
-              started_at TEXT,
-              view_count INTEGER,
-              user_id INTEGER
-            );
-
-            CREATE TABLE IF NOT EXISTS Chat_messages (
-              message_id TEXT PRIMARY KEY,
-              id INTEGER,
-              user_id INTEGER,
-              username TEXT,
-              message TEXT,
-              timestamp TEXT,
-              subscriber INTEGER,
-              FOREIGN KEY (id) REFERENCES Streams(id)
-            );
-          `;
-          
-          await this.connection.exec(query);
-          
-          console.log("Tables created successfully.");
-        }
-      } catch(error) {
+      if (existingTables.includes('Streams') && existingTables.includes('Chat_messages')) {
+        console.log(`Tables already exist.`);
+        return;
+      }
+      await this.connection.exec(`
+        CREATE TABLE IF NOT EXISTS Streams (
+          id TEXT PRIMARY KEY,
+          user_login TEXT,
+          title TEXT,
+          game_name TEXT,
+          started_at TEXT,
+          view_count INTEGER,
+          user_id INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS Chat_messages (
+          message_id TEXT PRIMARY KEY,
+          id INTEGER,
+          user_id INTEGER,
+          username TEXT,
+          message TEXT,
+          timestamp TEXT,
+          subscriber INTEGER,
+          FOREIGN KEY (id) REFERENCES Streams(id)
+        );
+      `);
+      console.log("Tables created successfully.");
+    } catch(error) {
       console.error(error);
     }
   }
