@@ -1,40 +1,47 @@
-## TwitchAnalyticsBot
+# TwitchAnalyticsBot
 
-TwitchDatabaseBot is an under-development Javascript program that has been used to log chat messages in real-time from one or more twitch.tv livestream.
+A real-time Twitch chat analytics platform that logs messages from live streams into a queryable SQLite database, with a live dashboard for monitoring chat activity across multiple channels simultaneously.
 
-The logged messages are then added to a SQLlite database created also by the program. From here, the messages can be queryed and used for analytical purposes. 
+## Overview
 
+TwitchAnalyticsBot connects to one or more Twitch channels via the Twitch API and TMI.js, recording every chat message along with metadata such as subscriber status, timestamps, and stream context. A built-in Express API exposes this data to a live web dashboard that updates every 5 seconds.
 
-## Usage/Examples
+Originally started around 2021 as a simple message logger, the project has since been significantly refactored and expanded. Active development resumed in late 2024 with a focus on reliability, analytics, and a real-time UI.
 
-```javascript
-client.on('message', (channel, tags, message, self) => 
-{
-  
-  const chatMessage= message = message.replace(/'/g, "''");
-  
-  d = new Date().toLocaleString('en-us', { weekday:"long", year:"numeric", month:"short", day:"numeric"})
-  
-  userID = tags['user-id']; // ID of the user, used for the database.
-  
-  twitchName = tags['display-name']; // Name of the user, used for the database.
-  
-  subscriber = tags['subscriber']; // ID of the user, used for the database.
-  
-  randID = Math.floor(Math.random() * 10_000_000_000); // Random ID for the database.
+## Features
 
-  named_channel = channel.replace('#', '').toUpperCase(); // Name of the channel, without the #.
+- Real-time chat logging across multiple Twitch channels
+- Per-channel SQLite databases with stream and message history
+- Live web dashboard showing viewer counts, messages per minute, top chatters, and subscriber ratios
+- REST API for querying chat data and stream statistics
+- Automatic stream metadata fetching via the Twitch Helix API
 
-  if (tags['subscriber'] == '1') {
-    console.log(`(${counter()})(${named_channel})(${tags['user-id']})(SUB) ${tags['display-name']}: ${chatMessage}`); // If the user is a subscriber, it will log that to the database.
-    
-  }
-  else {
-    console.log(`(${counter()})(${named_channel})(${tags['user-id']}) ${tags['display-name']}: ${chatMessage}`); // If the user is not a subscriber, it will log that to the database.
-    
-  }
+## Tech Stack
 
-  db.run(`INSERT INTO TwitchChatDatabase(FAKE_ID, TIMESTAMP, USER_ACCID, TWITCH_NAME, CHAT_MESSAGE, CHANNEL) VALUES(?, ?, ?, ?, ?, ?)`, [randID, d, userID, twitchName, chatMessage, named_channel], errorMessage); 
-});
-```
+- **Runtime:** Node.js
+- **Chat:** TMI.js
+- **API:** Express.js + Twitch Helix API
+- **Database:** SQLite (via `sqlite` + `sqlite3`)
+- **Dashboard:** Vanilla JS + Chart.js
 
+## Getting Started
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Create a `.env` file in the project root:
+   ```
+   CLIENT_ID=your_twitch_client_id
+   CLIENT_SECRET=your_twitch_client_secret
+   ```
+4. Start the bot and API server:
+   ```bash
+   node index.js
+   ```
+5. Open the dashboard at `http://localhost:3001/dashboard.html`
+
+## Project Status
+
+Actively maintained and in development. Contributions are welcome — feel free to open an issue or submit a pull request.
