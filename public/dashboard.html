@@ -431,27 +431,40 @@ document.getElementById('searchInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') runSearch();
 });
 
+let searchRefreshTimer = null;
+let lastSearchUsername = null;
+
 async function runSearch() {
   const input    = document.getElementById('searchInput');
   const btn      = document.getElementById('searchBtn');
   const username = input.value.trim();
 
-  if (!username)       return;
-  if (!activeChannel)  return alert('Select a channel first.');
+  if (!username)      return;
+  if (!activeChannel) return alert('Select a channel first.');
 
-  btn.disabled   = true;
+  lastSearchUsername = username; // ✅ store for auto-refresh
+
+  btn.disabled    = true;
   btn.textContent = '...';
 
-  // Open modal and show loading state
   document.getElementById('searchOverlay').classList.add('open');
   document.getElementById('searchChannel').textContent  = activeChannel;
   document.getElementById('searchUsername').textContent = username;
-  setText('searchTotalMsgs', '—');
-  setText('searchIsSub',     '—');
-  setText('searchFirstSeen', '—');
-  setText('searchLastSeen',  '—');
-  setHtml('searchMessages',  '<div class="search-loading">Searching...</div>');
 
+  await fetchSearchResults(username); // ✅ split into separate function
+
+  btn.disabled    = false;
+  btn.textContent = 'Go';
+
+  // Start polling while modal is open
+  clearInterval(searchRefreshTimer);
+  searchRefreshTimer = setInterval(() => {
+    if (lastSearchUsername) fetchSearchResults(lastSearchUsername);
+  }, 5000);
+}
+
+// Extracted so both runSearch and the interval can call it
+async function fetchSearchResults(username) {
   try {
     const data = await fetch(
       `${API}/channel/${activeChannel}/search?username=${encodeURIComponent(username)}`
@@ -462,45 +475,34 @@ async function runSearch() {
       return;
     }
 
-    const stats = data.stats || {};
+    const stats = data.stats    || {};
     const msgs  = data.messages || [];
 
-    // Stats strip
     setText('searchTotalMsgs', fmtNum(stats.total_messages || 0));
     setText('searchIsSub',     stats.subscriber_messages > 0 ? 'Yes' : 'No');
     setText('searchFirstSeen', fmtDate(stats.first_seen));
     setText('searchLastSeen',  fmtDate(stats.last_seen));
 
-    // Color the sub status
     const subEl = document.getElementById('searchIsSub');
     if (subEl) subEl.style.color = stats.subscriber_messages > 0 ? 'var(--purple)' : 'var(--muted)';
 
-    // Message list
     if (!msgs.length) {
       setHtml('searchMessages', `<div class="search-empty">No messages found for "${escHtml(username)}" in ${activeChannel}.</div>`);
       return;
     }
 
     const sorted = [...msgs].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
     let lastDateKey = null;
     const html = sorted.map(m => {
       const dateKey = getDateKey(m.timestamp);
       let header = '';
       if (dateKey !== lastDateKey) {
         lastDateKey = dateKey;
-        header = `
-          <div style="
-            padding: 8px 16px 6px;
-            font-family: var(--mono);
-            font-size: 10px;
-            color: var(--purple);
-            letter-spacing: .08em;
-            text-transform: uppercase;
-            border-bottom: 1px solid var(--border);
-            background: var(--surface2);
-            position: sticky; top: 0;
-          ">${fmtDate(m.timestamp)}</div>`;
+        header = `<div style="
+          padding: 8px 16px 6px; font-family: var(--mono); font-size: 10px;
+          color: var(--purple); letter-spacing: .08em; text-transform: uppercase;
+          border-bottom: 1px solid var(--border); background: var(--surface2);
+          position: sticky; top: 0;">${fmtDate(m.timestamp)}</div>`;
       }
       return header + `
         <div class="chat-row">
@@ -511,19 +513,22 @@ async function runSearch() {
         </div>`;
     }).join('');
 
-    setHtml('searchMessages', html || '<div class="search-empty">No messages found.</div>');
+    // ✅ Preserve scroll position while updating
+    const container = document.getElementById('searchMessages');
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+    container.innerHTML = html;
+    if (isAtBottom) container.scrollTop = container.scrollHeight;
 
   } catch (err) {
     console.error(err);
-    setHtml('searchMessages', '<div class="search-empty">Error fetching results.</div>');
-  } finally {
-    btn.disabled    = false;
-    btn.textContent = 'Go';
   }
 }
 
 function closeSearchModal() {
   document.getElementById('searchOverlay').classList.remove('open');
+  clearInterval(searchRefreshTimer); // ✅ stop polling when closed
+  searchRefreshTimer   = null;
+  lastSearchUsername   = null;
 }
 
 function closeSearch(e) {
