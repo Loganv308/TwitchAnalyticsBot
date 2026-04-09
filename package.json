@@ -14,14 +14,29 @@
     "puppeteer-recorder": "^1.0.7",
     "sentiment": "^5.0.2",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.2",
+    "sqlite3": "^6.0.1",
     "tmi.js": "^1.8.5",
     "winston": "^3.8.2"
   },
   "devDependencies": {
-    "eslint": "^8.57.0",
+    "@eslint/css": "^1.1.0",
+    "@eslint/js": "^10.0.1",
+    "@eslint/json": "^1.2.0",
+    "@eslint/markdown": "^8.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.5.2",
+    "@types/tmi.js": "^1.8.6",
+    "eslint": "^8.57.1",
     "eslint-config-airbnb-base": "^15.0.0",
-    "eslint-plugin-import": "^2.29.1"
+    "eslint-plugin-import": "^2.29.1",
+    "globals": "^17.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
   },
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "start": "node --loader ts-node/esm index.ts"
+  }
 }
