@@ -38,7 +38,7 @@ Originally started around 2021 as a simple message logger, the project has since
    ```
 4. Start the bot and API server:
    ```bash
-   node index.js
+   npm start
    ```
 5. Open the dashboard at `http://localhost:3001/dashboard.html`
 
