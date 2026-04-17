@@ -13,8 +13,8 @@ interface TwitchTokenResponse {
 
 // ─── Token Cache ───────────────────────────────────────────────────────────
 
-const clientId: string     = process.env.CLIENT_ID     ?? "";
-const clientSecret: string = process.env.CLIENT_SECRET ?? "";
+const clientId:     string = process.env.TWITCH_CLIENT_ID     ?? "";
+const clientSecret: string = process.env.TWITCH_CLIENT_SECRET ?? "";
 
 let cachedToken: string | null = null;
 let tokenExpiry: number        = 0;

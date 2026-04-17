@@ -371,9 +371,9 @@ setInterval(() => {
 async function loadChannels() {
   try {
     const data = await fetch(`${API}/channels`).then(r => r.json());
-    allChannels = data;
-    renderSidebar(data);
-    if (!activeChannel && data.length) switchChannel(data[0].cleanChannel);
+    allChannels = data.channels ?? data;
+    renderSidebar(allChannels);
+    if (!activeChannel && allChannels.length) switchChannel(allChannels[0].cleanChannel);
   } catch (error) {
     console.log(error);
     setHtml('channelList', '<div class="empty">Cannot reach API<br>Is index.ts running?</div>');
@@ -641,7 +641,7 @@ function buildLayout(channel, chData) {
             <tr><td>User ID</td>   <td id="infoUserId">—</td></tr>
             <tr><td>Started at</td><td id="infoStarted">—</td></tr>
             <tr><td>Sub ratio</td> <td id="infoSubPct">—</td></tr>
-            <tr><td>DB file</td>   <td>${escHtml(channel)}_Chat.sqlite</td></tr>
+            <tr><td>Source</td>    <td>Supabase</td></tr>
           </table>
         </div>
       </div>

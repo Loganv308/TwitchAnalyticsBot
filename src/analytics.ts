@@ -60,7 +60,7 @@ export async function getTopChannels(): Promise<TwitchStream[]> {
     .get<TwitchApiResponse<TwitchStream>>("https://api.twitch.tv/helix/streams", {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Client-ID": process.env.CLIENT_ID,
+        "Client-ID": process.env.TWITCH_CLIENT_ID,
       },
       params: { first: 10 },
     })
@@ -100,7 +100,7 @@ export async function getStreamData(channels: string[]): Promise<StreamData[]> {
     const response = await fetch(`${apiUrl}?${queryParams}`, {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Client-ID": process.env.CLIENT_ID!,  // '!' tells TS we know this is defined
+        "Client-ID": process.env.TWITCH_CLIENT_ID!,  // '!' tells TS we know this is defined
       },
     });
 
@@ -149,9 +149,9 @@ export async function offlineOnlineStreams(channels: string[]): Promise<StreamSt
 }
 
 // Grabs total entry counts from each table in the DB
-export async function getTablesCount(): Promise<void> {
+export async function getTablesCount(): Promise<{ messages: number; streams: number; skipped: number }> {
   const db = new DatabaseUtil();
-  db.openDatabase();
+  return db.getTableCounts();
 }
 
 export default {

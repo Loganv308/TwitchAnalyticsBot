@@ -1,176 +1,195 @@
-import sqlite3 from "sqlite3";
-import path from "path";
-import fs from "fs-extra";
-
-import { open, Database } from "sqlite";
-import { fileURLToPath } from "url";
-
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { StreamData } from "./analytics.ts";
 import type { MessageData } from "./ChatMessage.ts";
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
-interface TableRow {
-  name: string;
+export interface MessageRow {
+  message_id:  string;
+  channel_id:  number;
+  stream_id:   string | null;
+  user_id:     string | null;
+  username:    string;
+  message:     string;
+  timestamp:   string;
+  subscriber:  boolean;
+  is_bot:      boolean;
 }
 
-// ─── Setup ─────────────────────────────────────────────────────────────────
+export interface StreamRow {
+  id:           string;
+  channel_id:   number;
+  title:        string | null;
+  game_name:    string | null;
+  started_at:   string | null;
+  peak_viewers: number | null;
+}
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export interface ChannelStats {
+  channel:          string;
+  total_messages:   number;
+  unique_chatters:  number;
+  sub_messages:     number;
+  non_sub_messages: number;
+  sub_pct:          number;
+}
 
 // ─── Class ─────────────────────────────────────────────────────────────────
 
 export class DatabaseUtil {
-  private dbName: string;
-  private dbPath: string;
-  public connection: Database | null;
+  private client: SupabaseClient;
 
-  constructor(dbName: string = "") {
-    this.dbName     = dbName;
-    this.dbPath     = path.join(__dirname, "data", `${dbName}_Chat.sqlite`);
-    this.connection = null;
+  constructor() {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_ANON_KEY;
+
+    if (!url || !key) {
+      throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment.");
+    }
+
+    this.client = createClient(url, key);
   }
 
-  async openDatabase(): Promise<boolean> {
-    this.connection = await open({
-      filename: this.dbPath,
-      driver:   sqlite3.Database,
+  // ── Messages ─────────────────────────────────────────────────────────────
+
+  // Fetch latest N messages for a channel
+  async getLatestMessages(channelName: string, limit: number = 50, offset: number = 0): Promise<MessageRow[]> {
+    const { data, error } = await this.client
+      .from("messages")
+      .select(`*, channels!inner(name)`)
+      .eq("channels.name", channelName)
+      .order("timestamp", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) { console.error("Error fetching messages:", error); return []; }
+    return (data as MessageRow[]).reverse();
+  }
+
+  // Fetch messages for a specific stream
+  async getMessagesByStream(streamId: string, limit: number = 100): Promise<MessageRow[]> {
+    const { data, error } = await this.client
+      .from("messages")
+      .select("*")
+      .eq("stream_id", streamId)
+      .order("timestamp", { ascending: true })
+      .limit(limit);
+
+    if (error) {
+      console.error("Error fetching stream messages:", error);
+      return [];
+    }
+
+    return data as MessageRow[];
+  }
+
+  // ── Streams ───────────────────────────────────────────────────────────────
+
+  // Fetch all streams for a channel
+  async getStreams(channelName: string): Promise<StreamRow[]> {
+    const { data, error } = await this.client
+      .from("streams")
+      .select(`
+        id,
+        channel_id,
+        title,
+        game_name,
+        started_at,
+        peak_viewers,
+        channels!inner(name)
+      `)
+      .eq("channels.name", channelName)
+      .order("started_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching streams:", error);
+      return [];
+    }
+
+    return data as StreamRow[];
+  }
+
+  // Fetch most recent stream for a channel
+  async getLatestStream(channelName: string): Promise<StreamRow | null> {
+    const streams = await this.getStreams(channelName);
+    return streams[0] ?? null;
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  // Fetch message volume per channel
+  async getChannelStats(): Promise<ChannelStats[]> {
+    const { data, error } = await this.client.rpc("get_channel_stats");
+
+    if (error) {
+      console.error("Error fetching channel stats:", error);
+      return [];
+    }
+
+    return data as ChannelStats[];
+  }
+
+  // Fetch most active chatters for a channel
+  async getTopChatters(channelName: string, limit: number = 10): Promise<{ username: string; message_count: number }[]> {
+    const { data, error } = await this.client.rpc("get_top_chatters", {
+      channel_name: channelName,
+      lim: limit,
     });
-    // WAL mode allows simultaneous reads and writes
-    await this.connection.run("PRAGMA journal_mode=WAL;");
-    // Wait up to 5s for a lock to clear instead of immediately erroring
-    await this.connection.run("PRAGMA busy_timeout=5000;");
-    return this.connection !== null;
+
+    if (error) { console.error("Error fetching top chatters:", error); return []; }
+    return data;
   }
 
-  // Initializes the database file for a channel if it doesn't exist
-  async initDatabase(): Promise<void> {
-    await fs.ensureDir(path.dirname(this.dbPath));
-    const isNew = !fs.existsSync(this.dbPath);
+    // Fetch total row counts
+    async getTableCounts(): Promise<{ messages: number; streams: number; skipped: number }> {
+      const [messages, streams, skipped] = await Promise.all([
+        this.client.from("messages").select("*", { count: "exact", head: true }),
+        this.client.from("streams").select("*", { count: "exact", head: true }),
+        this.client.from("skipped_messages").select("*", { count: "exact", head: true }),
+      ]);
 
-    if (isNew) {
-      await fs.writeFile(this.dbPath, "");
-      fs.chmodSync(this.dbPath, 0o666);
-      console.log(`Database initialized for channel: ${this.dbName}`);
-    } else {
-      console.log(`Database for ${this.dbName} exists, opening...`);
+      return {
+        messages: messages.count ?? 0,
+        streams:  streams.count  ?? 0,
+        skipped:  skipped.count  ?? 0,
+      };
     }
 
-    await this.openDatabase();
+  // Search messages by username in a channel
+  async searchUser(channelName: string, username: string): Promise<object> {
+    const { data: messages, error } = await this.client
+      .from("messages")
+      .select(`*, channels!inner(name)`)
+      .eq("channels.name", channelName)
+      .ilike("username", username)
+      .order("timestamp", { ascending: false })
+      .limit(100);
+
+    if (error) { console.error("Error searching user:", error); return {}; }
+
+    const total      = messages.length;
+    const sub_msgs   = messages.filter(m => m.subscriber).length;
+    const first_seen = messages.at(-1)?.timestamp ?? null;
+    const last_seen  = messages.at(0)?.timestamp  ?? null;
+
+    return {
+      username,
+      stats: { total_messages: total, subscriber_messages: sub_msgs, first_seen, last_seen },
+      messages,
+    };
   }
 
-  // Creates Streams and Chat_messages tables if they don't already exist
-  async createTables(): Promise<void> {
-    if (!this.connection) {
-      console.error("Database connection not initialized.");
-      return;
-    }
-
-    try {
-      const rows = await this.connection.all<TableRow[]>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)`,
-        ["Streams", "Chat_messages"]
-      );
-
-      const existingTables = rows.map((row) => row.name);
-      if (existingTables.includes("Streams") && existingTables.includes("Chat_messages")) {
-        console.log("Tables already exist.");
-        return;
-      }
-
-      await this.connection.exec(`
-        CREATE TABLE IF NOT EXISTS Streams (
-          id TEXT PRIMARY KEY,
-          user_login TEXT,
-          title TEXT,
-          game_name TEXT,
-          started_at TEXT,
-          view_count INTEGER,
-          user_id INTEGER
-        );
-
-        CREATE TABLE IF NOT EXISTS Chat_messages (
-          message_id TEXT PRIMARY KEY,
-          id INTEGER,
-          user_id INTEGER,
-          username TEXT,
-          message TEXT,
-          timestamp TEXT,
-          subscriber INTEGER,
-          FOREIGN KEY (id) REFERENCES Streams(id)
-        );
-      `);
-
-      console.log("Tables created successfully.");
-    } catch (error) {
-      console.error(error);
-    }
+  // Messages per minute over last 30 minutes
+  async getMessagesPerMinute(channelName: string): Promise<object[]> {
+    const { data, error } = await this.client.rpc("get_messages_per_minute", { channel_name: channelName });
+    if (error) { console.error("Error fetching mpm:", error); return []; }
+    return data;
   }
 
-  // Inserts stream metadata into the Streams table
-  async insertStreamData(streamData: StreamData[]): Promise<void> {
-    if (!this.connection) {
-      console.error("Database connection not initialized.");
-      return;
-    }
-
-    const query = `
-      INSERT OR REPLACE INTO Streams (id, user_login, title, game_name, started_at, view_count, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?);
-    `;
-
-    try {
-      for (const stream of streamData) {
-        await this.connection.run(query, [
-          stream.id,
-          stream.user_login,
-          stream.title,
-          stream.game_name,
-          stream.started_at,
-          stream.viewer_count,
-          stream.user_id,
-        ]);
-      }
-    } catch (error) {
-      console.error("Error inserting data into the database:", error);
-    }
+  // Subscriber ratio for a channel
+  async getSubscriberRatio(channelName: string): Promise<object> {
+    const { data, error } = await this.client.rpc("get_subscriber_ratio", { channel_name: channelName });
+    if (error) { console.error("Error fetching sub ratio:", error); return {}; }
+    return data?.[0] ?? {};
   }
 
-  // Inserts a single chat message into the Chat_messages table
-  async insertChatData(chatMessage: MessageData): Promise<void> {
-    if (!this.connection) {
-      console.error("Database connection not initialized.");
-      return;
-    }
-
-    const sanitizedData: [string, number | null, number, string, string, string, 0 | 1] = [
-      chatMessage.message_id || "UNKNOWN_ID",
-      chatMessage.id         ?? null,
-      chatMessage.user_id    || 0,
-      chatMessage.username   || "Anonymous",
-      chatMessage.message    || "[EMPTY MESSAGE]",
-      chatMessage.timestamp  || new Date().toISOString(),
-      chatMessage.subscriber,
-    ];
-
-    const query = `
-      INSERT INTO Chat_messages (message_id, id, user_id, username, message, timestamp, subscriber)
-      VALUES (?, ?, ?, ?, ?, ?, ?);
-    `;
-
-    try {
-      await this.connection.run(query, sanitizedData);
-    } catch (error) {
-      console.error("Error inserting data into the database:", error);
-    }
-  }
-
-  // Closes the database connection
-  async closeDatabase(): Promise<void> {
-    if (this.connection) {
-      await this.connection.close();
-      this.connection = null;
-      console.log("Database connection closed.");
-    }
-  }
 }

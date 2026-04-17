@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@supabase/supabase-js": "^2.103.3",
     "axios": "^1.6.8",
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
@@ -33,10 +34,11 @@
     "eslint-plugin-import": "^2.29.1",
     "globals": "^17.4.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2"
   },
   "type": "module",
   "scripts": {
-    "start": "node --loader ts-node/esm index.ts"
+    "start": "tsx index.ts"
   }
 }
