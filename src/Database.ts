@@ -139,6 +139,15 @@ export class DatabaseUtil {
     return data;
   }
 
+  async getChannelNames(): Promise<string[]> {
+    const { data, error } = await this.client
+      .from("channels")
+      .select("name");
+
+    if (error) { console.error("Error fetching channel names:", error); return []; }
+    return data.map((r: { name: string }) => r.name);
+  }
+
     // Fetch total row counts
     async getTableCounts(): Promise<{ messages: number; streams: number; skipped: number }> {
       const [messages, streams, skipped] = await Promise.all([

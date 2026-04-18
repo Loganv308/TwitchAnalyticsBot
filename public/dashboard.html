@@ -315,9 +315,9 @@ const POLL_MS = 5000;
 // ── state ──────────────────────────────────────────────────────────────────
 let activeChannel  = null;
 let allChannels    = [];
-let pollTimer      = null;
 let layoutBuilt    = false;
 let mpmChart       = null;
+let isPolling      = false;
 
 // ── helpers ────────────────────────────────────────────────────────────────
 function fmtNum(n) {
@@ -328,12 +328,12 @@ function fmtNum(n) {
 }
 function fmtTs(ts) {
   if (!ts) return '—';
-  try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
   catch { return ts; }
 }
 function fmtDate(ts) {
   if (!ts) return '—';
-  try { return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' }); }
+  try { return new Date(ts).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); }
   catch { return ts; }
 }
 function hashColor(str) {
@@ -353,6 +353,11 @@ function setHtml(id, val) {
   const el = document.getElementById(id);
   if (el) el.innerHTML = val;
 }
+function getDateKey(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
 
 // ── clock ──────────────────────────────────────────────────────────────────
 setInterval(() => {
@@ -370,23 +375,21 @@ setInterval(() => {
 // ── sidebar ────────────────────────────────────────────────────────────────
 async function loadChannels() {
   try {
-    const data = await fetch(`${API}/channels`).then(r => r.json());
+    const data  = await fetch(`${API}/channels`).then(r => r.json());
     allChannels = data.channels ?? data;
     renderSidebar(allChannels);
     if (!activeChannel && allChannels.length) switchChannel(allChannels[0].cleanChannel);
   } catch (error) {
-    console.log(error);
+    console.error(error);
     setHtml('channelList', '<div class="empty">Cannot reach API<br>Is index.ts running?</div>');
   }
 }
 
 function renderSidebar(channels) {
   const sort = document.getElementById('sortSelect')?.value || 'default';
-
   const sorted = [...channels].sort((a, b) => {
     switch (sort) {
       case 'online':
-        // Online first, then by viewers
         if (a.online !== b.online) return a.online ? -1 : 1;
         return (b.stream?.viewer_count || 0) - (a.stream?.viewer_count || 0);
       case 'viewers':
@@ -396,7 +399,7 @@ function renderSidebar(channels) {
       case 'name':
         return a.cleanChannel.localeCompare(b.cleanChannel);
       default:
-        return 0; // preserve original CHANNELS array order
+        return 0;
     }
   });
 
@@ -405,7 +408,7 @@ function renderSidebar(channels) {
             onclick="switchChannel('${ch.cleanChannel}')">
       <span class="ch-dot ${ch.online ? 'live' : ''}"></span>
       <span class="ch-name">${ch.cleanChannel}</span>
-      <span class="ch-viewers">${ch.online ? fmtNum(ch.stream?.viewer_count || ch.stream?.view_count) : ''}</span>
+      <span class="ch-viewers">${ch.online ? fmtNum(ch.stream?.viewer_count) : ''}</span>
     </button>
   `).join(''));
 }
@@ -416,13 +419,8 @@ function switchChannel(name) {
   layoutBuilt   = false;
   seenMessageIds.clear();
   renderSidebar(allChannels);
-  clearInterval(pollTimer);
   refreshStart = Date.now();
-  poll(name);
-  pollTimer = setInterval(() => {
-    refreshStart = Date.now();
-    poll(name);
-  }, POLL_MS);
+  poll(name); // immediate poll on switch
 }
 
 // ── search ─────────────────────────────────────────────────────────────────
@@ -442,21 +440,19 @@ async function runSearch() {
   if (!username)      return;
   if (!activeChannel) return alert('Select a channel first.');
 
-  lastSearchUsername = username; // ✅ store for auto-refresh
-
-  btn.disabled    = true;
-  btn.textContent = '...';
+  lastSearchUsername = username;
+  btn.disabled       = true;
+  btn.textContent    = '...';
 
   document.getElementById('searchOverlay').classList.add('open');
   document.getElementById('searchChannel').textContent  = activeChannel;
   document.getElementById('searchUsername').textContent = username;
 
-  await fetchSearchResults(username); // ✅ split into separate function
+  await fetchSearchResults(username);
 
   btn.disabled    = false;
   btn.textContent = 'Go';
 
-  // Start polling while modal is open
   clearInterval(searchRefreshTimer);
   searchRefreshTimer = setInterval(() => {
     if (lastSearchUsername) fetchSearchResults(lastSearchUsername);
@@ -466,9 +462,7 @@ async function runSearch() {
 // Extracted so both runSearch and the interval can call it
 async function fetchSearchResults(username) {
   try {
-    const data = await fetch(
-      `${API}/channel/${activeChannel}/search?username=${encodeURIComponent(username)}`
-    ).then(r => r.json());
+    const data  = await fetch(`${API}/channel/${activeChannel}/search?username=${encodeURIComponent(username)}`).then(r => r.json());
 
     if (data.error) {
       setHtml('searchMessages', `<div class="search-empty">${escHtml(data.error)}</div>`);
@@ -498,11 +492,10 @@ async function fetchSearchResults(username) {
       let header = '';
       if (dateKey !== lastDateKey) {
         lastDateKey = dateKey;
-        header = `<div style="
-          padding: 8px 16px 6px; font-family: var(--mono); font-size: 10px;
-          color: var(--purple); letter-spacing: .08em; text-transform: uppercase;
-          border-bottom: 1px solid var(--border); background: var(--surface2);
-          position: sticky; top: 0;">${fmtDate(m.timestamp)}</div>`;
+        header = `<div style="padding:8px 16px 6px;font-family:var(--mono);font-size:10px;
+          color:var(--purple);letter-spacing:.08em;text-transform:uppercase;
+          border-bottom:1px solid var(--border);background:var(--surface2);
+          position:sticky;top:0;">${fmtDate(m.timestamp)}</div>`;
       }
       return header + `
         <div class="chat-row">
@@ -513,8 +506,7 @@ async function fetchSearchResults(username) {
         </div>`;
     }).join('');
 
-    // ✅ Preserve scroll position while updating
-    const container = document.getElementById('searchMessages');
+    const container  = document.getElementById('searchMessages');
     const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
     container.innerHTML = html;
     if (isAtBottom) container.scrollTop = container.scrollHeight;
@@ -526,30 +518,41 @@ async function fetchSearchResults(username) {
 
 function closeSearchModal() {
   document.getElementById('searchOverlay').classList.remove('open');
-  clearInterval(searchRefreshTimer); // ✅ stop polling when closed
-  searchRefreshTimer   = null;
-  lastSearchUsername   = null;
+  clearInterval(searchRefreshTimer);
+  searchRefreshTimer = null;
+  lastSearchUsername = null;
 }
 
 function closeSearch(e) {
-  // Close if clicking the backdrop, not the modal itself
   if (e.target === document.getElementById('searchOverlay')) closeSearchModal();
 }
 
-// Close on Escape key
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeSearchModal();
 });
 
 // ── single poll cycle ──────────────────────────────────────────────────────
+const seenMessageIds = new Set();
+
 async function poll(channel) {
+  if (isPolling) return; // prevent overlapping polls
+  isPolling = true;
+
   try {
-    const [messages, mpm, topChatters, subRatio] = await Promise.all([
-      fetch(`${API}/channel/${channel}/messages?limit=30`).then(r => r.json()),
+    // Fetch channel data and all stats in parallel
+    const [channelRes, messages, mpm, topChatters, subRatio] = await Promise.all([
+      fetch(`${API}/channels`).then(r => r.json()),
+      fetch(`${API}/channel/${channel}/messages?limit=50`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/mpm`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/top-chatters`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/subscriber-ratio`).then(r => r.json()),
     ]);
+
+    // Update allChannels so sidebar live status stays fresh
+    allChannels = channelRes.channels ?? channelRes;
+    renderSidebar(allChannels);
+
+    // Get the latest data for active channel
     const chData = allChannels.find(c => c.cleanChannel === channel) || {};
 
     if (!layoutBuilt) {
@@ -560,12 +563,16 @@ async function poll(channel) {
     patchData(channel, chData, messages, mpm, topChatters, subRatio);
 
   } catch (e) {
+    console.error('Poll error:', e);
     if (!layoutBuilt) {
       setHtml('mainContent', `<div class="loading">Error loading ${channel}</div>`);
     }
+  } finally {
+    isPolling = false;
   }
 }
 
+// ── buildLayout ────────────────────────────────────────────────────────────
 // ── buildLayout ────────────────────────────────────────────────────────────
 function buildLayout(channel, chData) {
   if (mpmChart) { mpmChart.destroy(); mpmChart = null; }
@@ -582,11 +589,11 @@ function buildLayout(channel, chData) {
       </div>
       <div class="banner-right">
         <div class="banner-stat">
-          <div class="banner-stat-val"  id="bannerViewers">—</div>
+          <div class="banner-stat-val" id="bannerViewers">—</div>
           <div class="banner-stat-label">viewers</div>
         </div>
         <div class="banner-stat">
-          <div class="banner-stat-val"  id="bannerMsgs">—</div>
+          <div class="banner-stat-val" id="bannerMsgs">—</div>
           <div class="banner-stat-label">messages logged</div>
         </div>
       </div>
@@ -679,47 +686,58 @@ function buildLayout(channel, chData) {
   });
 }
 
+
 // ── patchData ──────────────────────────────────────────────────────────────
 function patchData(channel, chData, messages, mpm, topChatters, subRatio) {
   const stream      = chData.stream || {};
   const stats       = chData.stats  || {};
   const isLive      = chData.online;
-  const totalMsgs   = stats.total_messages        || 0;
-  const uniqueUsers = stats.unique_chatters        || 0;
-  const subMsgs     = stats.subscriber_messages   || 0;
+  const totalMsgs   = stats.total_messages      || 0;
+  const uniqueUsers = stats.unique_chatters      || 0;
+  const subMsgs     = stats.sub_messages         || 0;
   const subPct      = totalMsgs ? Math.round(subMsgs / totalMsgs * 100) : 0;
-  const curMpm = mpm.length
+  const curMpm      = mpm.length
     ? Math.round(mpm.reduce((sum, r) => sum + r.count, 0) / mpm.length)
     : '—';
 
+  // Live pill
   const pill = document.getElementById('livePill');
   if (pill) {
     pill.textContent = isLive ? 'LIVE' : 'OFFLINE';
     pill.className   = isLive ? 'live-pill' : 'offline-pill';
   }
-  setText('streamTitle',   stream.title     || channel);
-  setText('streamGame',    stream.game_name || '—');
-  setText('bannerViewers', fmtNum(stream.viewer_count || stream.view_count));
-  setText('bannerMsgs',    fmtNum(totalMsgs));
-  setText('metTotalMsgs',  fmtNum(totalMsgs));
-  setText('metUnique',     fmtNum(uniqueUsers));
-  setText('metSubMsgs',    fmtNum(subMsgs));
-  setText('metSubPct',     subPct + '% of all chat');
-  setText('metMpm',        curMpm);
-  setText('infoGame',      stream.game_name  || '—');
-  setText('infoId',        stream.id         || '—');
-  setText('infoUserId',    stream.user_id    || '—');
-  setText('infoStarted',   fmtTs(stream.started_at));
-  setText('infoSubPct',    subPct + '%');
 
+  // Banner
+  setText('streamTitle',   stream.title      || channel);
+  setText('streamGame',    stream.game_name  || '—');
+  setText('bannerViewers', isLive ? fmtNum(stream.viewer_count) : '—');
+  setText('bannerMsgs',    fmtNum(totalMsgs));
+
+  // Metrics
+  setText('metTotalMsgs', fmtNum(totalMsgs));
+  setText('metUnique',    fmtNum(uniqueUsers));
+  setText('metSubMsgs',   fmtNum(subMsgs));
+  setText('metSubPct',    subPct + '% of all chat');
+  setText('metMpm',       curMpm);
+
+  // Stream info table
+  setText('infoGame',    stream.game_name || '—');
+  setText('infoId',      stream.id        || '—');
+  setText('infoUserId',  stream.user_id   || '—');
+  setText('infoStarted', fmtTs(stream.started_at));
+  setText('infoSubPct',  subPct + '%');
+
+  // Chart
   if (mpmChart) {
-    mpmChart.data.labels           = mpm.map(r => r.minute ? r.minute.slice(11,16) : '');
+    mpmChart.data.labels           = mpm.map(r => r.minute ? r.minute.slice(11, 16) : '');
     mpmChart.data.datasets[0].data = mpm.map(r => r.count);
     mpmChart.update('none');
   }
 
+  // Chat feed
   patchChatFeed(messages);
 
+  // Top chatters
   const max = topChatters[0]?.message_count || 1;
   setHtml('chatterList', topChatters.length
     ? topChatters.map((c, i) => `
@@ -735,14 +753,14 @@ function patchData(channel, chData, messages, mpm, topChatters, subRatio) {
   );
 }
 
+
 // ── Chat feed ──────────────────────────────────────────────────────────────
-const seenMessageIds = new Set();
 
 function patchChatFeed(messages) {
   const feed = document.getElementById('chatFeed');
   if (!feed) return;
 
-  if (!messages.length) {
+  if (!Array.isArray(messages) || !messages.length) {
     if (!seenMessageIds.size) feed.innerHTML = '<div class="empty">No messages in DB yet.</div>';
     return;
   }
@@ -766,27 +784,14 @@ function patchChatFeed(messages) {
   while (feed.children.length > 60) feed.removeChild(feed.lastChild);
 }
 
-function fmtTs(ts) {
-  if (!ts) return '—';
-  try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
-  catch { return ts; }
-}
-
-function fmtDate(ts) {
-  if (!ts) return '—';
-  try { return new Date(ts).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); }
-  catch { return ts; }
-}
-
-function getDateKey(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; // unique key per day
-}
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 loadChannels();
-setInterval(loadChannels, 30000);
+
+setInterval(() => {
+  refreshStart = Date.now();
+  if (activeChannel) poll(activeChannel);
+}, POLL_MS);
 </script>
 </body>
 </html>
