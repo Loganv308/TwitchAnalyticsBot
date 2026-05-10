@@ -38,7 +38,6 @@
   }
   .logo { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px; font-weight: 500; }
   .logo svg { color: var(--purple); }
-  .header-right { display: flex; align-items: center; gap: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   #clock { color: var(--muted); }
@@ -230,13 +229,6 @@
       </svg>
       TwitchAnalyticsBot
     </div>
-    <div class="header-right">
-      <div class="refresh-bar" style="width:120px;">
-        <div class="refresh-fill" id="refreshFill" style="width:100%"></div>
-      </div>
-      <div class="pulse"></div>
-      <span id="clock"></span>
-    </div>
   </header>
 
   <!-- ── Sidebar ── -->
@@ -365,13 +357,6 @@ setInterval(() => {
     new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }, 1000);
 
-// ── refresh progress bar ───────────────────────────────────────────────────
-let refreshStart = Date.now();
-setInterval(() => {
-  const pct = Math.max(0, 100 - ((Date.now() - refreshStart) / POLL_MS * 100));
-  document.getElementById('refreshFill').style.width = pct + '%';
-}, 100);
-
 // ── sidebar ────────────────────────────────────────────────────────────────
 async function loadChannels() {
   try {
@@ -383,6 +368,25 @@ async function loadChannels() {
     console.error(error);
     setHtml('channelList', '<div class="empty">Cannot reach API<br>Is index.ts running?</div>');
   }
+}
+
+async function waitForStore() {
+  while (true) {
+    try {
+      const status = await fetch(`${API}/status`).then(r => r.json());
+      if (status.ready) return;
+      setHtml('channelList', '<div class="loading">Loading data...</div>');
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+async function boot() {
+  await waitForStore();
+  loadChannels();
+  setInterval(() => {
+    if (activeChannel) poll(activeChannel);
+  }, POLL_MS);
 }
 
 function renderSidebar(channels) {
@@ -419,7 +423,6 @@ function switchChannel(name) {
   layoutBuilt   = false;
   seenMessageIds.clear();
   renderSidebar(allChannels);
-  refreshStart = Date.now();
   poll(name); // immediate poll on switch
 }
 
@@ -485,7 +488,7 @@ async function fetchSearchResults(username) {
       return;
     }
 
-    const sorted = [...msgs].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const sorted = [...msgs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     let lastDateKey = null;
     const html = sorted.map(m => {
       const dateKey = getDateKey(m.timestamp);
@@ -648,7 +651,7 @@ function buildLayout(channel, chData) {
             <tr><td>User ID</td>   <td id="infoUserId">—</td></tr>
             <tr><td>Started at</td><td id="infoStarted">—</td></tr>
             <tr><td>Sub ratio</td> <td id="infoSubPct">—</td></tr>
-            <tr><td>Source</td>    <td>Supabase</td></tr>
+            <tr><td>Source</td>    <td>PostgreSQL</td></tr>
           </table>
         </div>
       </div>
@@ -697,7 +700,7 @@ function patchData(channel, chData, messages, mpm, topChatters, subRatio) {
   const subMsgs     = stats.sub_messages         || 0;
   const subPct      = totalMsgs ? Math.round(subMsgs / totalMsgs * 100) : 0;
   const curMpm      = mpm.length
-    ? Math.round(mpm.reduce((sum, r) => sum + r.count, 0) / mpm.length)
+    ? Math.round(mpm.reduce((sum, r) => sum + Number(r.count), 0) / mpm.length)
     : '—';
 
   // Live pill
@@ -786,12 +789,8 @@ function patchChatFeed(messages) {
 
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-loadChannels();
+boot();
 
-setInterval(() => {
-  refreshStart = Date.now();
-  if (activeChannel) poll(activeChannel);
-}, POLL_MS);
 </script>
 </body>
 </html>

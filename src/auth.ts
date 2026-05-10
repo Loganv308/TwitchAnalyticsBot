@@ -31,14 +31,15 @@ export async function getOAuthToken(): Promise<string> {
     throw new Error("CLIENT_ID and CLIENT_SECRET must be set in your .env file.");
   }
 
-  const response = await axios.post<TwitchTokenResponse>(
-    "https://id.twitch.tv/oauth2/token",
-    `client_id=${clientId}&client_secret=${clientSecret}&grant_type=client_credentials`,
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
+  const response = await fetch("https://id.twitch.tv/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `client_id=${clientId}&client_secret=${clientSecret}&grant_type=client_credentials`,
+  });
 
-  cachedToken = response.data.access_token;
-  tokenExpiry = Date.now() + response.data.expires_in * 1000;
+  const data = await response.json() as TwitchTokenResponse;
+  cachedToken = data.access_token;
+  tokenExpiry = Date.now() + data.expires_in * 1000;
 
   return cachedToken;
 }

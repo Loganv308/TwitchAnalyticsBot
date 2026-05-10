@@ -1,114 +1,127 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { StreamData } from "./analytics.ts";
-import type { MessageData } from "./ChatMessage.ts";
+import { Pool } from "pg";
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
 export interface MessageRow {
-  message_id:  string;
-  channel_id:  number;
-  stream_id:   string | null;
-  user_id:     string | null;
-  username:    string;
-  message:     string;
-  timestamp:   string;
-  subscriber:  boolean;
-  is_bot:      boolean;
+  message_id: string;
+  channel_id: number;
+  stream_id: string | null;
+  user_id: string | null;
+  username: string;
+  message: string;
+  timestamp: string;
+  subscriber: boolean;
+  is_bot: boolean;
 }
 
 export interface StreamRow {
-  id:           string;
-  channel_id:   number;
-  title:        string | null;
-  game_name:    string | null;
-  started_at:   string | null;
+  id: string;
+  channel_id: number;
+  title: string | null;
+  game_name: string | null;
+  started_at: string | null;
   peak_viewers: number | null;
 }
 
 export interface ChannelStats {
-  channel:          string;
-  total_messages:   number;
-  unique_chatters:  number;
-  sub_messages:     number;
+  channel: string;
+  total_messages: number;
+  unique_chatters: number;
+  sub_messages: number;
   non_sub_messages: number;
-  sub_pct:          number;
+  sub_pct: number;
 }
+
+const pool = new Pool({
+  host:     process.env.PGHOST,
+  port:     Number(process.env.PGPORT || 5432),
+  user:     process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+  max:      10,   // cap concurrent connections
+  idleTimeoutMillis:    30_000,
+  connectionTimeoutMillis: 5_000,
+});
 
 // ─── Class ─────────────────────────────────────────────────────────────────
 
 export class DatabaseUtil {
-  private client: SupabaseClient;
-
-  constructor() {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_ANON_KEY;
-
-    if (!url || !key) {
-      throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment.");
-    }
-
-    this.client = createClient(url, key);
-  }
+  private pool = pool;
 
   // ── Messages ─────────────────────────────────────────────────────────────
 
-  // Fetch latest N messages for a channel
-  async getLatestMessages(channelName: string, limit: number = 50, offset: number = 0): Promise<MessageRow[]> {
-    const { data, error } = await this.client
-      .from("messages")
-      .select(`*, channels!inner(name)`)
-      .eq("channels.name", channelName)
-      .order("timestamp", { ascending: false })
-      .range(offset, offset + limit - 1);
+  async getLatestMessages(
+    channelName: string,
+    limit: number = 50,
+    offset: number = 0
+  ): Promise<MessageRow[]> {
 
-    if (error) { console.error("Error fetching messages:", error); return []; }
-    return (data as MessageRow[]).reverse();
+    const query = `
+      SELECT m.*
+      FROM messages m
+      INNER JOIN channels c ON m.channel_id = c.id
+      WHERE c.name = $1
+      ORDER BY m.timestamp DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+    try {
+      const result = await this.pool.query(query, [
+        channelName,
+        limit,
+        offset,
+      ]);
+
+      return result.rows.reverse();
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      return [];
+    }
   }
 
-  // Fetch messages for a specific stream
-  async getMessagesByStream(streamId: string, limit: number = 100): Promise<MessageRow[]> {
-    const { data, error } = await this.client
-      .from("messages")
-      .select("*")
-      .eq("stream_id", streamId)
-      .order("timestamp", { ascending: true })
-      .limit(limit);
+  async getMessagesByStream(
+    streamId: string,
+    limit: number = 100
+  ): Promise<MessageRow[]> {
 
-    if (error) {
+    const query = `
+      SELECT *
+      FROM messages
+      WHERE stream_id = $1
+      ORDER BY timestamp ASC
+      LIMIT $2
+    `;
+
+    try {
+      const result = await this.pool.query(query, [streamId, limit]);
+      return result.rows;
+    } catch (error) {
       console.error("Error fetching stream messages:", error);
       return [];
     }
-
-    return data as MessageRow[];
   }
 
   // ── Streams ───────────────────────────────────────────────────────────────
 
-  // Fetch all streams for a channel
   async getStreams(channelName: string): Promise<StreamRow[]> {
-    const { data, error } = await this.client
-      .from("streams")
-      .select(`
-        id,
-        channel_id,
-        title,
-        game_name,
-        started_at,
-        peak_viewers,
-        channels!inner(name)
-      `)
-      .eq("channels.name", channelName)
-      .order("started_at", { ascending: false });
 
-    if (error) {
+    const query = `
+      SELECT s.*
+      FROM streams s
+      INNER JOIN channels c ON s.channel_id = c.id
+      WHERE c.name = $1
+      ORDER BY s.started_at DESC
+    `;
+
+    try {
+      const result = await this.pool.query(query, [channelName]);
+      return result.rows;
+    } catch (error) {
       console.error("Error fetching streams:", error);
       return [];
     }
-
-    return data as StreamRow[];
   }
 
-  // Fetch most recent stream for a channel
   async getLatestStream(channelName: string): Promise<StreamRow | null> {
     const streams = await this.getStreams(channelName);
     return streams[0] ?? null;
@@ -116,89 +129,167 @@ export class DatabaseUtil {
 
   // ── Stats ─────────────────────────────────────────────────────────────────
 
-  // Fetch message volume per channel
   async getChannelStats(): Promise<ChannelStats[]> {
-    const { data, error } = await this.client.rpc("get_channel_stats");
 
-    if (error) {
+    const query = `SELECT * FROM get_channel_stats()`;
+
+    try {
+      const result = await this.pool.query(query);
+      return result.rows;
+    } catch (error) {
       console.error("Error fetching channel stats:", error);
       return [];
     }
-
-    return data as ChannelStats[];
   }
 
-  // Fetch most active chatters for a channel
-  async getTopChatters(channelName: string, limit: number = 10): Promise<{ username: string; message_count: number }[]> {
-    const { data, error } = await this.client.rpc("get_top_chatters", {
-      channel_name: channelName,
-      lim: limit,
-    });
+  async getTopChatters(
+    channelName: string,
+    limit: number = 10
+  ): Promise<{ username: string; message_count: number }[]> {
 
-    if (error) { console.error("Error fetching top chatters:", error); return []; }
-    return data;
+    const query = `
+      SELECT *
+      FROM get_top_chatters($1, $2)
+    `;
+
+    try {
+      const result = await this.pool.query(query, [
+        channelName,
+        limit,
+      ]);
+
+      return result.rows;
+    } catch (error) {
+      console.error("Error fetching top chatters:", error);
+      return [];
+    }
   }
 
   async getChannelNames(): Promise<string[]> {
-    const { data, error } = await this.client
-      .from("channels")
-      .select("name");
 
-    if (error) { console.error("Error fetching channel names:", error); return []; }
-    return data.map((r: { name: string }) => r.name);
+    const query = `SELECT name FROM public.channels`;
+
+    try {
+      const result = await this.pool.query(query);
+
+      return result.rows.map((r: { name: string }) => r.name);
+    } catch (error) {
+      console.error("Error fetching channel names:", error);
+      return [];
+    }
   }
 
-    // Fetch total row counts
-    async getTableCounts(): Promise<{ messages: number; streams: number; skipped: number }> {
-      const [messages, streams, skipped] = await Promise.all([
-        this.client.from("messages").select("*", { count: "exact", head: true }),
-        this.client.from("streams").select("*", { count: "exact", head: true }),
-        this.client.from("skipped_messages").select("*", { count: "exact", head: true }),
-      ]);
+  async getTableCounts(): Promise<{ messages: number; streams: number; skipped: number }> {
+    try {
+      const result = await this.pool.query(`
+        SELECT relname, n_live_tup
+        FROM pg_stat_user_tables
+        WHERE relname IN ('messages', 'streams', 'skipped_messages')
+      `);
+
+      const row = (name: string) =>
+        result.rows.find(r => r.relname === name)?.n_live_tup ?? 0;
 
       return {
-        messages: messages.count ?? 0,
-        streams:  streams.count  ?? 0,
-        skipped:  skipped.count  ?? 0,
+        messages: Number(row('messages')),
+        streams:  Number(row('streams')),
+        skipped:  Number(row('skipped_messages')),
       };
+    } catch (error) {
+      console.error("Error fetching table counts:", error);
+      return { messages: 0, streams: 0, skipped: 0 };
     }
+  }
 
-  // Search messages by username in a channel
   async searchUser(channelName: string, username: string): Promise<object> {
-    const { data: messages, error } = await this.client
-      .from("messages")
-      .select(`*, channels!inner(name)`)
-      .eq("channels.name", channelName)
-      .ilike("username", username)
-      .order("timestamp", { ascending: false })
-      .limit(100);
+    try {
+      const [statsResult, messagesResult] = await Promise.all([
+        // No LIMIT — get true stats across all messages
+        this.pool.query(`
+          SELECT
+            COUNT(*)::int AS total_messages,
+            COUNT(*) FILTER (WHERE subscriber)::int AS subscriber_messages,
+            MIN(timestamp) AS first_seen,
+            MAX(timestamp) AS last_seen
+          FROM messages m
+          JOIN channels c ON m.channel_id = c.id
+          WHERE c.name = $1
+          AND m.username ILIKE $2
+        `, [channelName, username]),
 
-    if (error) { console.error("Error searching user:", error); return {}; }
+        // Last 100 for display only
+        this.pool.query(`
+          SELECT m.*
+          FROM messages m
+          JOIN channels c ON m.channel_id = c.id
+          WHERE c.name = $1
+          AND m.username ILIKE $2
+          ORDER BY m.timestamp DESC
+          LIMIT 100
+        `, [channelName, username]),
+      ]);
 
-    const total      = messages.length;
-    const sub_msgs   = messages.filter(m => m.subscriber).length;
-    const first_seen = messages.at(-1)?.timestamp ?? null;
-    const last_seen  = messages.at(0)?.timestamp  ?? null;
+      const stats = statsResult.rows[0];
 
-    return {
-      username,
-      stats: { total_messages: total, subscriber_messages: sub_msgs, first_seen, last_seen },
-      messages,
-    };
+      return {
+        username,
+        stats: {
+          total_messages:      stats.total_messages,
+          subscriber_messages: stats.subscriber_messages,
+          first_seen:          stats.first_seen,
+          last_seen:           stats.last_seen,
+        },
+        messages: messagesResult.rows,
+      };
+
+    } catch (error) {
+      console.error("Error searching user:", error);
+      return {};
+    }
   }
 
-  // Messages per minute over last 30 minutes
+  async refreshMaterializedViews(): Promise<void> {
+    await Promise.all([
+      this.pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY channel_stats_mv'),
+      this.pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY top_chatters_mv'),
+    ]);
+  }
+
   async getMessagesPerMinute(channelName: string): Promise<object[]> {
-    const { data, error } = await this.client.rpc("get_messages_per_minute", { channel_name: channelName });
-    if (error) { console.error("Error fetching mpm:", error); return []; }
-    return data;
+
+    const query = `
+      SELECT *
+      FROM get_messages_per_minute($1)
+    `;
+
+    try {
+      const result = await this.pool.query(query, [channelName]);
+      return result.rows;
+    } catch (error) {
+      console.error("Error fetching mpm:", error);
+      return [];
+    }
   }
 
-  // Subscriber ratio for a channel
   async getSubscriberRatio(channelName: string): Promise<object> {
-    const { data, error } = await this.client.rpc("get_subscriber_ratio", { channel_name: channelName });
-    if (error) { console.error("Error fetching sub ratio:", error); return {}; }
-    return data?.[0] ?? {};
+
+    const query = `
+      SELECT *
+      FROM get_subscriber_ratio($1)
+    `;
+
+    try {
+      const result = await this.pool.query(query, [channelName]);
+      return result.rows[0] ?? {};
+    } catch (error) {
+      console.error("Error fetching sub ratio:", error);
+      return {};
+    }
   }
 
+  // ── Cleanup ──────────────────────────────────────────────────────────────
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
 }

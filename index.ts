@@ -18,26 +18,8 @@ const app = express();
 app.use(cors());
 app.use(express.static("public"));
 
-let liveMap: Map<string, StreamData> = new Map();
-
-async function refreshLiveMap(): Promise<void> {
-  try {
-    const channels = await db.getChannelNames();
-    if (!channels.length) return;
-    const liveStreams = await getStreamData(channels);
-    liveMap = new Map(liveStreams.map(s => [s.user_login.toLowerCase(), s]));
-    console.log(`Live map refreshed: ${liveMap.size} channels live`);
-  } catch (err) {
-    console.error("Failed to refresh live map:", err instanceof Error ? err.message : err);
-  }
-}
-
-refreshLiveMap();
-setInterval(refreshLiveMap, 60_000);
-
 // ─── In-memory store ───────────────────────────────────────────────────────
-
-interface ChannelCache {
+interface ChannelData {
   messages:    any[];
   mpm:         any[];
   topChatters: any[];
@@ -45,15 +27,45 @@ interface ChannelCache {
   updatedAt:   number;
 }
 
-const store = new Map<string, ChannelCache>();
+const store      = new Map<string, ChannelData>();
+let channelNames: string[] = [];
+let liveMap: Map<string, StreamData> = new Map();
+let channelStats: any[] = [];
+let tableCounts:  any   = {};
 
-// ─── Single background refresh loop ───────────────────────────────────────
+async function refreshLiveMap(): Promise<void> {
+  try {
+    if (!channelNames.length) return;
+    const liveStreams = await getStreamData(channelNames);
+    liveMap = new Map(liveStreams.map(s => [s.user_login.toLowerCase(), s]));
+    console.log(`Live map keys:`, [...liveMap.keys()]);
+    console.log(`Channel stats keys:`, channelStats.map(s => s.channel));
+    console.log(`Live map refreshed: ${liveMap.size} live`);
+  } catch (err) {
+    console.error("Live map error:", err instanceof Error ? err.message : err);
+  }
+}
+// ─── Refresh Materialized Views within database ────────────────────────────
+async function refreshMaterializedViews(): Promise<void> {
+  try {
+    await db.refreshMaterializedViews();
+    console.log('[DB] Materialized views refreshed');
+  } catch (err) {
+    console.error('MV refresh error:', err);
+  }
+}
+// ─── Refresh a single channel ──────────────────────────────────────────────
 
 async function refreshChannel(name: string): Promise<void> {
   try {
-    const [messages, mpm, topChatters, subRatio] = await Promise.all([
+    // Messages and mpm are cheap — run together
+    const [messages, mpm] = await Promise.all([
       db.getLatestMessages(name, 50, 0),
       db.getMessagesPerMinute(name),
+    ]);
+
+    // Top chatters and sub ratio are heavier — run after
+    const [topChatters, subRatio] = await Promise.all([
       db.getTopChatters(name),
       db.getSubscriberRatio(name),
     ]);
@@ -64,108 +76,85 @@ async function refreshChannel(name: string): Promise<void> {
   }
 }
 
-async function refreshAllChannels(): Promise<void> {
-  const channels = await db.getChannelNames();
+// ─── Main background loop ──────────────────────────────────────────────────
 
-  // Stagger requests — don't fire all channels at once
-  for (const name of channels) {
-    await refreshChannel(name);
-    await new Promise(r => setTimeout(r, 200)); // 200ms between each channel
-  }
+let storeReady = false;
 
-  console.log(`Refreshed ${channels.length} channels`);
-}
-
-// Run once on startup, then every 10 seconds
-refreshAllChannels();
-setInterval(refreshAllChannels, 10_000);
-
-// ─── Routes ────────────────────────────────────────────────────────────────
-
-// ─── Cache ─────────────────────────────────────────────────────────────────
-
-interface CacheEntry { data: any; expiresAt: number; }
-const cache    = new Map<string, CacheEntry>();
-const CACHE_TTL = 5_000; // match frontend poll interval
-
-function getCache(key: string): any | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { cache.delete(key); return null; }
-  return entry.data;
-}
-
-function setCache(key: string, data: any, ttl = CACHE_TTL): void {
-  cache.set(key, { data, expiresAt: Date.now() + ttl });
-}
-
-async function prefetchAllChannels(): Promise<void> {
-  try {
-    const channels = await db.getChannelNames();
-
-    // All channels in parallel, not sequential
-    await Promise.all(channels.map(async name => {
-      try {
-        const [messages, mpm, topChatters, subRatio] = await Promise.all([
-          db.getLatestMessages(name, 50, 0),
-          db.getMessagesPerMinute(name),
-          db.getTopChatters(name),
-          db.getSubscriberRatio(name),
-        ]);
-        setCache(`messages:${name}:50:0`, messages, 5_000);
-        setCache(`mpm:${name}`,           mpm,      5_000);
-        setCache(`top-chatters:${name}`,  topChatters, 30_000); // top chatters change slowly
-        setCache(`sub-ratio:${name}`,     subRatio,    30_000); // sub ratio changes slowly
-      } catch (err) {
-        console.error(`Prefetch failed for ${name}:`, err);
-      }
-    }));
-
-    console.log(`Prefetched ${channels.length} channels`);
-  } catch (err) {
-    console.error("Prefetch error:", err);
+async function refreshChannelsInBatches(): Promise<void> {
+  const BATCH_SIZE = 3; // reduce from 5
+  for (let i = 0; i < channelNames.length; i += BATCH_SIZE) {
+    const batch = channelNames.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(name => refreshChannel(name)));
+    // small pause between batches to let the DB breathe
+    if (i + BATCH_SIZE < channelNames.length) {
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
 }
 
-// Prefetch on startup and every 30 seconds
-prefetchAllChannels();
-setInterval(prefetchAllChannels, 5_000);
-
-// GET /api/channels — sidebar stats for every channel
-app.get("/api/channels", async (_req: Request, res: Response) => {
+async function backgroundRefresh(): Promise<void> {
   try {
-    const cached = getCache("channels");
-    if (cached) return res.json(cached);
-
     const [stats, counts] = await Promise.all([
       db.getChannelStats(),
       db.getTableCounts(),
     ]);
-
-    const channels = stats.map(s => ({
-      cleanChannel: s.channel,
-      online:       liveMap.has(s.channel),
-      stats:        s,
-      stream:       liveMap.get(s.channel) ?? null,
-    }));
-
-    const result = { channels, counts };
-    setCache("channels", result, 5_000);
-    res.json(result);
+    channelStats = stats;
+    tableCounts  = counts;
+    await refreshChannelsInBatches();
+    console.log(`[Store] Refreshed ${channelNames.length} channels`);
   } catch (err) {
-    console.error("Error fetching channels:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Background refresh error:", err);
   }
+}
+
+// ─── Routes — all served from memory, zero Supabase calls ─────────────────
+
+app.get("/api/channels", (_req: Request, res: Response) => {
+  const channels = channelStats.map(s => ({
+    cleanChannel: s.channel,
+    online:       liveMap.has(s.channel),
+    stats:        s,
+    stream:       liveMap.get(s.channel) ?? null,
+  }));
+  res.json({ channels, counts: tableCounts });
 });
 
 app.get("/api/channel/:name/messages", (req: Request, res: Response) => {
-  const name  = String(req.params.name).toLowerCase();
-  const data  = store.get(name);
-  if (!data) return res.status(404).json({ error: "Channel not found or not yet loaded" });
-  res.json(data.messages);
+  const name = String(req.params.name).toLowerCase();
+  const data = store.get(name);
+  res.json(data?.messages ?? []);
 });
 
-// GET /api/channel/:name/search?username=someuser
+app.get("/api/channel/:name/stats/mpm", (req: Request, res: Response) => {
+  const name = String(req.params.name).toLowerCase();
+  const data = store.get(name);
+  res.json(data?.mpm ?? []);
+});
+
+app.get("/api/channel/:name/stats/top-chatters", (req: Request, res: Response) => {
+  const name = String(req.params.name).toLowerCase();
+  const data = store.get(name);
+  res.json(data?.topChatters ?? []);
+});
+
+app.get("/api/channel/:name/stats/subscriber-ratio", (req: Request, res: Response) => {
+  const name = String(req.params.name).toLowerCase();
+  const data = store.get(name);
+  res.json(data?.subRatio ?? { sub_messages: 0, non_sub_messages: 0, total: 0 });
+});
+
+app.get("/api/channel/:name/streams", async (req: Request, res: Response) => {
+  const name = String(req.params.name).toLowerCase();
+  const rows = await db.getStreams(name);
+  res.json(rows);
+});
+
+app.get("/api/status", (_req: Request, res: Response) => {
+  res.json({ ready: storeReady, channels: channelNames.length });
+});
+
+// Search is the only route that hits Supabase on demand
+// since it's user-triggered and can't be pre-cached
 app.get("/api/channel/:name/search", async (req: Request, res: Response) => {
   const name     = String(req.params.name).toLowerCase();
   const username = req.query.username as string;
@@ -175,35 +164,34 @@ app.get("/api/channel/:name/search", async (req: Request, res: Response) => {
   res.json(result);
 });
 
-app.get("/api/channel/:name/stats/mpm", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
-  if (!data) return res.status(404).json({ error: "Channel not found or not yet loaded" });
-  res.json(data.mpm);
-});
+async function boot(): Promise<void> {
+  // Step 1 — cheap, just reads channel names
+  channelNames = await db.getChannelNames();
 
-// GET /api/channel/:name/stats/top-chatters
-app.get("/api/channel/:name/stats/top-chatters", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
-  if (!data) return res.status(404).json({ error: "Channel not found or not yet loaded" });
-  res.json(data.topChatters);
-});
+  // Step 2 — MV refresh first, so downstream queries are fast
+  await db.refreshMaterializedViews();
 
-// GET /api/channel/:name/stats/subscriber-ratio
-app.get("/api/channel/:name/stats/subscriber-ratio", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
-  if (!data) return res.status(404).json({ error: "Channel not found or not yet loaded" });
-  res.json(data.subRatio);
-});
+  // Step 3 — now read from the refreshed MVs
+  const [stats, counts] = await Promise.all([
+    db.getChannelStats(),
+    db.getTableCounts(),
+  ]);
+  channelStats = stats;
+  tableCounts  = counts;
 
-// GET /api/channel/:name/streams
-app.get("/api/channel/:name/streams", async (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const rows = await db.getStreams(name);
-  res.json(rows);
-});
+  // Step 4 — live map and channel data, sequenced not parallel
+  await refreshLiveMap();
+  await refreshChannelsInBatches();
+
+  storeReady = true;
+  console.log(`[Boot] Ready — ${channelNames.length} channels loaded`);
+
+  setInterval(backgroundRefresh, 30_000);   // was 10s, too aggressive
+  setInterval(refreshLiveMap, 60_000);
+  setInterval(refreshMaterializedViews, 5 * 60 * 1000);
+}
+
+boot();
 
 // ─── Start ─────────────────────────────────────────────────────────────────
 
