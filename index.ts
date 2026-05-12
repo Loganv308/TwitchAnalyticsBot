@@ -3,6 +3,7 @@ import express, { type Request, type Response } from "express";
 import dotenv from "dotenv";
 import { DatabaseUtil } from "./src/Database.ts";
 import { getStreamData, type StreamData } from "./src/analytics.ts";
+import { LogStream } from "./src/logstream.ts";
 
 // ─── Config ────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,13 @@ dotenv.config();
 
 const API_PORT = 3001;
 const db       = new DatabaseUtil();
+
+// ─── Log Setup ─────────────────────────────────────────────────────────────
+
+const log = new LogStream({ 
+  service: 'TwitchAnalyticsBot', 
+  host: 'http://192.168.1.97:3000' 
+});
 
 // ─── Express ───────────────────────────────────────────────────────────────
 
@@ -38,20 +46,20 @@ async function refreshLiveMap(): Promise<void> {
     if (!channelNames.length) return;
     const liveStreams = await getStreamData(channelNames);
     liveMap = new Map(liveStreams.map(s => [s.user_login.toLowerCase(), s]));
-    console.log(`Live map keys:`, [...liveMap.keys()]);
-    console.log(`Channel stats keys:`, channelStats.map(s => s.channel));
-    console.log(`Live map refreshed: ${liveMap.size} live`);
+    log.info(`Live map keys:`, { keys: [...liveMap.keys()] });
+    log.info(`Channel stats keys:`, { keys: channelStats.map(s => s.channel)});
+    log.info(`Live map refreshed: ${liveMap.size} live`);
   } catch (err) {
-    console.error("Live map error:", err instanceof Error ? err.message : err);
+    log.error(`Live map error: ${err instanceof Error ? err.message : err}`);
   }
 }
 // ─── Refresh Materialized Views within database ────────────────────────────
 async function refreshMaterializedViews(): Promise<void> {
   try {
     await db.refreshMaterializedViews();
-    console.log('[DB] Materialized views refreshed');
+    log.info('[DB] Materialized views refreshed');
   } catch (err) {
-    console.error('MV refresh error:', err);
+    log.error(`MV refresh error: ${err}`);
   }
 }
 // ─── Refresh a single channel ──────────────────────────────────────────────
@@ -72,7 +80,7 @@ async function refreshChannel(name: string): Promise<void> {
 
     store.set(name, { messages, mpm, topChatters, subRatio, updatedAt: Date.now() });
   } catch (err) {
-    console.error(`Refresh failed for ${name}:`, err);
+    log.error(`Refresh failed for ${name}: ${err}`);
   }
 }
 
@@ -101,9 +109,9 @@ async function backgroundRefresh(): Promise<void> {
     channelStats = stats;
     tableCounts  = counts;
     await refreshChannelsInBatches();
-    console.log(`[Store] Refreshed ${channelNames.length} channels`);
+    log.info(`[Store] Refreshed ${channelNames.length} channels`);
   } catch (err) {
-    console.error("Background refresh error:", err);
+    log.error(`Background refresh error: ${err}`);
   }
 }
 
@@ -119,28 +127,26 @@ app.get("/api/channels", (_req: Request, res: Response) => {
   res.json({ channels, counts: tableCounts });
 });
 
-app.get("/api/channel/:name/messages", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
-  res.json(data?.messages ?? []);
+app.get("/api/channel/:name/messages", async (req: Request, res: Response) => {
+  const name  = String(req.params.name).toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const messages = await db.getLatestMessages(name, limit);
+  res.json(messages);
 });
 
 app.get("/api/channel/:name/stats/mpm", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
+  const data = store.get(String(req.params.name).toLowerCase());
   res.json(data?.mpm ?? []);
 });
 
 app.get("/api/channel/:name/stats/top-chatters", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
+  const data = store.get(String(req.params.name).toLowerCase());
   res.json(data?.topChatters ?? []);
 });
 
 app.get("/api/channel/:name/stats/subscriber-ratio", (req: Request, res: Response) => {
-  const name = String(req.params.name).toLowerCase();
-  const data = store.get(name);
-  res.json(data?.subRatio ?? { sub_messages: 0, non_sub_messages: 0, total: 0 });
+  const data = store.get(String(req.params.name).toLowerCase());
+  res.json(data?.subRatio ?? {});
 });
 
 app.get("/api/channel/:name/streams", async (req: Request, res: Response) => {
@@ -165,13 +171,9 @@ app.get("/api/channel/:name/search", async (req: Request, res: Response) => {
 });
 
 async function boot(): Promise<void> {
-  // Step 1 — cheap, just reads channel names
   channelNames = await db.getChannelNames();
-
-  // Step 2 — MV refresh first, so downstream queries are fast
   await db.refreshMaterializedViews();
 
-  // Step 3 — now read from the refreshed MVs
   const [stats, counts] = await Promise.all([
     db.getChannelStats(),
     db.getTableCounts(),
@@ -179,16 +181,13 @@ async function boot(): Promise<void> {
   channelStats = stats;
   tableCounts  = counts;
 
-  // Step 4 — live map and channel data, sequenced not parallel
   await refreshLiveMap();
   await refreshChannelsInBatches();
-
   storeReady = true;
-  console.log(`[Boot] Ready — ${channelNames.length} channels loaded`);
 
-  setInterval(backgroundRefresh, 30_000);   // was 10s, too aggressive
-  setInterval(refreshLiveMap, 60_000);
   setInterval(refreshMaterializedViews, 5 * 60 * 1000);
+  setTimeout(() => setInterval(backgroundRefresh, 5 * 60 * 1000), 30_000);     // offset by 30s
+  setTimeout(() => setInterval(refreshLiveMap, 60_000), 15_000);               // offset by 15s
 }
 
 boot();
@@ -196,11 +195,11 @@ boot();
 // ─── Start ─────────────────────────────────────────────────────────────────
 
 app.listen(API_PORT, () => {
-  console.log(`\nAPI server running  →  http://localhost:${API_PORT}`);
-  console.log(`Dashboard           →  http://localhost:${API_PORT}/dashboard.html\n`);
+  log.info(`\nAPI server running  →  http://localhost:${API_PORT}`);
+  log.info(`Dashboard           →  http://localhost:${API_PORT}/dashboard.html\n`);
 });
 
 process.on("unhandledRejection", (err) => {
   const message = err instanceof Error ? err.message : String(err);
-  console.error("Unhandled rejection:", message);
+  log.error(`Unhandled rejection: ${message}`);
 });

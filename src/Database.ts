@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { LogStream } from "./logstream.ts";
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
@@ -43,6 +44,14 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000,
 });
 
+// ─── Log Setup ─────────────────────────────────────────────────────────────
+
+const log = new LogStream({ 
+  service: 'TwitchAnalyticsBot-DB', 
+  host: 'http://192.168.1.97:3000' 
+});
+
+
 // ─── Class ─────────────────────────────────────────────────────────────────
 
 export class DatabaseUtil {
@@ -74,7 +83,7 @@ export class DatabaseUtil {
 
       return result.rows.reverse();
     } catch (error) {
-      console.error("Error fetching messages:", error);
+      log.error(`Error fetching messages: ${error}`);
       return [];
     }
   }
@@ -96,7 +105,7 @@ export class DatabaseUtil {
       const result = await this.pool.query(query, [streamId, limit]);
       return result.rows;
     } catch (error) {
-      console.error("Error fetching stream messages:", error);
+      log.error(`Error fetching stream messages: ${error}`);
       return [];
     }
   }
@@ -117,7 +126,7 @@ export class DatabaseUtil {
       const result = await this.pool.query(query, [channelName]);
       return result.rows;
     } catch (error) {
-      console.error("Error fetching streams:", error);
+      log.error(`Error fetching streams: ${error}`);
       return [];
     }
   }
@@ -137,7 +146,7 @@ export class DatabaseUtil {
       const result = await this.pool.query(query);
       return result.rows;
     } catch (error) {
-      console.error("Error fetching channel stats:", error);
+      log.error(`Error fetching channel stats: ${error}`);
       return [];
     }
   }
@@ -160,7 +169,7 @@ export class DatabaseUtil {
 
       return result.rows;
     } catch (error) {
-      console.error("Error fetching top chatters:", error);
+      log.error(`Error fetching top chatters: ${error}`);
       return [];
     }
   }
@@ -174,7 +183,7 @@ export class DatabaseUtil {
 
       return result.rows.map((r: { name: string }) => r.name);
     } catch (error) {
-      console.error("Error fetching channel names:", error);
+      log.error(`Error fetching channel names: ${error}`);
       return [];
     }
   }
@@ -196,7 +205,7 @@ export class DatabaseUtil {
         skipped:  Number(row('skipped_messages')),
       };
     } catch (error) {
-      console.error("Error fetching table counts:", error);
+      log.error(`Error fetching table counts: ${error}`);
       return { messages: 0, streams: 0, skipped: 0 };
     }
   }
@@ -243,7 +252,7 @@ export class DatabaseUtil {
       };
 
     } catch (error) {
-      console.error("Error searching user:", error);
+      log.error(`Error searching user: ${error}`);
       return {};
     }
   }
@@ -266,7 +275,7 @@ export class DatabaseUtil {
       const result = await this.pool.query(query, [channelName]);
       return result.rows;
     } catch (error) {
-      console.error("Error fetching mpm:", error);
+      log.error(`Error fetching mpm: ${error}`);
       return [];
     }
   }
@@ -282,7 +291,7 @@ export class DatabaseUtil {
       const result = await this.pool.query(query, [channelName]);
       return result.rows[0] ?? {};
     } catch (error) {
-      console.error("Error fetching sub ratio:", error);
+      log.error(`Error fetching sub ratio: ${error}`);
       return {};
     }
   }

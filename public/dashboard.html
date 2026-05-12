@@ -383,7 +383,8 @@ async function waitForStore() {
 
 async function boot() {
   await waitForStore();
-  loadChannels();
+  await loadChannels();                        // initial load
+  setInterval(loadChannels, 30_000);           // sidebar refreshes every 30s
   setInterval(() => {
     if (activeChannel) poll(activeChannel);
   }, POLL_MS);
@@ -488,7 +489,7 @@ async function fetchSearchResults(username) {
       return;
     }
 
-    const sorted = [...msgs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const sorted = [...msgs].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     let lastDateKey = null;
     const html = sorted.map(m => {
       const dateKey = getDateKey(m.timestamp);
@@ -538,24 +539,17 @@ document.addEventListener('keydown', e => {
 const seenMessageIds = new Set();
 
 async function poll(channel) {
-  if (isPolling) return; // prevent overlapping polls
+  if (isPolling) return;
   isPolling = true;
 
   try {
-    // Fetch channel data and all stats in parallel
-    const [channelRes, messages, mpm, topChatters, subRatio] = await Promise.all([
-      fetch(`${API}/channels`).then(r => r.json()),
+    const [messages, mpm, topChatters, subRatio] = await Promise.all([
       fetch(`${API}/channel/${channel}/messages?limit=50`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/mpm`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/top-chatters`).then(r => r.json()),
       fetch(`${API}/channel/${channel}/stats/subscriber-ratio`).then(r => r.json()),
     ]);
 
-    // Update allChannels so sidebar live status stays fresh
-    allChannels = channelRes.channels ?? channelRes;
-    renderSidebar(allChannels);
-
-    // Get the latest data for active channel
     const chData = allChannels.find(c => c.cleanChannel === channel) || {};
 
     if (!layoutBuilt) {
@@ -682,8 +676,26 @@ function buildLayout(channel, chData) {
         }
       },
       scales: {
-        x: { ticks: { color: '#848494', font: { family: "'IBM Plex Mono'", size: 10 }, maxRotation: 0 }, grid: { color: '#2a2a2f' } },
-        y: { beginAtZero: true, ticks: { color: '#848494', font: { family: "'IBM Plex Mono'", size: 10 } }, grid: { color: '#2a2a2f' } }
+        x: {
+          ticks: {
+            color: '#848494',
+            font: { family: "'IBM Plex Mono'", size: 10 },
+            maxRotation: 0,
+            autoSkip: true,
+            autoSkipPadding: 40,
+            maxTicksLimit: 6,
+            callback: function(value, index, ticks) {
+              // Only show first, last, and evenly spaced middle labels
+              const step = Math.floor(ticks.length / 5);
+              if (index === 0 || index === ticks.length - 1 || index % step === 0) {
+                return this.getLabelForValue(value);
+              }
+              return '';
+            }
+          },
+          grid: { color: '#2a2a2f' }
+        },
+        y: { beginAtZero: true, ticks: { color: '#848494', font: { family: "'IBM Plex Mono'", size: 10 } }, maxTicksLimit: 6, grid: { color: '#2a2a2f' } }
       }
     }
   });
@@ -732,8 +744,8 @@ function patchData(channel, chData, messages, mpm, topChatters, subRatio) {
 
   // Chart
   if (mpmChart) {
-    mpmChart.data.labels           = mpm.map(r => r.minute ? r.minute.slice(11, 16) : '');
-    mpmChart.data.datasets[0].data = mpm.map(r => r.count);
+    mpmChart.data.labels = mpm.map(r => r.minute ? r.minute.slice(11, 16) : '');
+    mpmChart.data.datasets[0].data = mpm.map(r => Number(r.count));
     mpmChart.update('none');
   }
 
