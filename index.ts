@@ -89,14 +89,10 @@ async function refreshChannel(name: string): Promise<void> {
 let storeReady = false;
 
 async function refreshChannelsInBatches(): Promise<void> {
-  const BATCH_SIZE = 3; // reduce from 5
+  const BATCH_SIZE = 10;
   for (let i = 0; i < channelNames.length; i += BATCH_SIZE) {
     const batch = channelNames.slice(i, i + BATCH_SIZE);
     await Promise.all(batch.map(name => refreshChannel(name)));
-    // small pause between batches to let the DB breathe
-    if (i + BATCH_SIZE < channelNames.length) {
-      await new Promise(r => setTimeout(r, 500));
-    }
   }
 }
 
@@ -172,7 +168,6 @@ app.get("/api/channel/:name/search", async (req: Request, res: Response) => {
 
 async function boot(): Promise<void> {
   channelNames = await db.getChannelNames();
-  await db.refreshMaterializedViews();
 
   const [stats, counts] = await Promise.all([
     db.getChannelStats(),
@@ -185,9 +180,10 @@ async function boot(): Promise<void> {
   await refreshChannelsInBatches();
   storeReady = true;
 
+  db.refreshMaterializedViews().catch(err => log.error(`MV refresh error: ${err}`));
   setInterval(refreshMaterializedViews, 5 * 60 * 1000);
-  setTimeout(() => setInterval(backgroundRefresh, 5 * 60 * 1000), 30_000);     // offset by 30s
-  setTimeout(() => setInterval(refreshLiveMap, 60_000), 15_000);               // offset by 15s
+  setTimeout(() => setInterval(backgroundRefresh, 5 * 60 * 1000), 30_000);
+  setTimeout(() => setInterval(refreshLiveMap, 60_000), 15_000);
 }
 
 boot();
