@@ -1,0 +1,13 @@
+services:
+ api:
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3001:3001"
+    networks:
+      - internal
+  
+networks:
+  internal:
+    driver: bridge
